@@ -59,6 +59,7 @@ dependencies = [
 name = "morton-rs"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "nalgebra",
  "num-traits",
  "rand",

@@ -8,3 +8,5 @@ pub enum Error {
     #[error("Cell index is out of range")]
     CellIndexOutOfRange,
 }
+
+pub type Result<T> = std::result::Result<T, crate::Error>;

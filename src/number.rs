@@ -21,6 +21,9 @@ macro_rules! impl_bits {
         unsafe fn as_u32(&self) -> u32 { *self as u32 }
         unsafe fn as_u64(&self) -> u64 { *self as u64 }
         unsafe fn as_u128(&self) -> u128 { *self as u128 }
+        unsafe fn as_vec_u8(&self) -> Vec<u8> {
+            bytemuck::bytes_of(self).to_owned()
+        }
 
         unsafe fn from_u8(val: u8) -> Self { val as Self }
         unsafe fn from_u16(val: u16) -> Self { val as Self }
@@ -45,6 +48,7 @@ pub trait Bits : Sized {
     unsafe fn as_u32(&self) -> u32;
     unsafe fn as_u64(&self) -> u64;
     unsafe fn as_u128(&self) -> u128;
+    unsafe fn as_vec_u8(&self) -> Vec<u8>;
 
     unsafe fn from_u8(val: u8) -> Self;
     unsafe fn from_u16(val: u16) -> Self;
