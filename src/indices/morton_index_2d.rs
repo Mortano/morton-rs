@@ -5,7 +5,7 @@ use std::hash::Hash;
 use nalgebra::Vector2;
 
 use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
-use crate::number::Bits;
+use crate::number::{Bits, Endianness};
 use crate::{MortonIndex, MortonIndexNaming};
 
 pub type FixedDepthMortonIndex2D8 = MortonIndex2D<FixedDepthStorage2D<u8>>;
@@ -226,14 +226,18 @@ impl<B: FixedStorageType> Storage2D for FixedDepthStorage2D<B> {
     }
 
     unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant {
-        let bits = self.bits.get_bits(2 * level..2 * (level + 1)).as_u8() as usize;
+        let start_bit = B::BITS - ((level + 1) * 2);
+        let end_bit = start_bit + 2;
+        let bits = self.bits.get_bits(start_bit..end_bit).as_u8() as usize;
         Quadrant::try_from(bits).unwrap()
     }
 
     unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant) {
         let cell_index: usize = cell.into();
+        let start_bit = B::BITS - ((level + 1) * 2);
+        let end_bit = start_bit + 2;
         self.bits
-            .set_bits(2 * level..2 * (level + 1), B::from_u8(cell_index as u8));
+            .set_bits(start_bit..end_bit, B::from_u8(cell_index as u8));
     }
 }
 
@@ -288,7 +292,7 @@ impl<B: FixedStorageType> StaticStorage2D<B> {
         B::BITS / 2
     };
 
-    fn get_cell_at_level_or_none(&self, level: usize) -> Option<Quadrant> {
+    fn _get_cell_at_level_or_none(&self, level: usize) -> Option<Quadrant> {
         if level >= self.depth.into() {
             None
         } else {
@@ -306,17 +310,34 @@ impl<B: FixedStorageType> PartialOrd for StaticStorage2D<B> {
 
 impl<B: FixedStorageType> Ord for StaticStorage2D<B> {
     fn cmp(&self, other: &Self) -> Ordering {
-        let max_level = self.depth().max(other.depth());
-        for level in 0..max_level {
-            let self_cell = self.get_cell_at_level_or_none(level);
-            let other_cell = other.get_cell_at_level_or_none(level);
-            let cmp = self_cell.cmp(&other_cell);
-            if cmp == Ordering::Equal {
-                continue;
+        match self.depth().cmp(&other.depth()) {
+            Ordering::Less => {
+                // Only compare bits up to 2*self.depth(). If less or equal, self is by definition less
+                let self_bits = unsafe { self.bits.get_bits(0..(self.depth() * 2)) };
+                let other_bits = unsafe { other.bits.get_bits(0..(self.depth() * 2)) };
+                if self_bits > other_bits {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
             }
-            return cmp;
+            Ordering::Equal => {
+                let self_bits = unsafe { self.bits.get_bits(0..(self.depth() * 2)) };
+                let other_bits = unsafe { other.bits.get_bits(0..(other.depth() * 2)) };
+                self_bits.cmp(&other_bits)
+            }
+            Ordering::Greater => {
+                // This is the opposite of the Ordering::Less case, we compare bits up to 2*other.depth() and
+                // if self is greater or equal, other is less, otherwise other is greater
+                let self_bits = unsafe { self.bits.get_bits(0..(other.depth() * 2)) };
+                let other_bits = unsafe { other.bits.get_bits(0..(other.depth() * 2)) };
+                if self_bits >= other_bits {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
         }
-        Ordering::Equal
     }
 }
 
@@ -355,14 +376,18 @@ impl<B: FixedStorageType> Storage2D for StaticStorage2D<B> {
     }
 
     unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant {
-        let bits = self.bits.get_bits(2 * level..2 * (level + 1)).as_u8() as usize;
+        let start_bit = B::BITS - ((level + 1) * 2);
+        let end_bit = start_bit + 2;
+        let bits = self.bits.get_bits(start_bit..end_bit).as_u8() as usize;
         Quadrant::try_from(bits).unwrap()
     }
 
     unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant) {
         let cell_index: usize = cell.into();
+        let start_bit = B::BITS - ((level + 1) * 2);
+        let end_bit = start_bit + 2;
         self.bits
-            .set_bits(2 * level..2 * (level + 1), B::from_u8(cell_index as u8));
+            .set_bits(start_bit..end_bit, B::from_u8(cell_index as u8));
     }
 }
 
@@ -476,9 +501,8 @@ impl Storage2D for DynamicStorage2D {
                     .enumerate()
                     .fold(0_u8, |accum, (idx, quadrant)| {
                         let quadrant_index: usize = quadrant.into();
-                        // maybe subtract from 6 so that low levels are stored in the more significant bits?
-                        // does it matter though? As long as sorting works?
-                        accum | ((quadrant_index as u8) << (2 * idx))
+                        // Store bits as little endian
+                        accum | ((quadrant_index as u8) << (6 - (2 * idx)))
                     })
             })
             .collect::<Vec<_>>();
@@ -494,7 +518,7 @@ impl Storage2D for DynamicStorage2D {
 
     unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant {
         let byte_index = level / 4;
-        let start_bit = (level % 4) * 2;
+        let start_bit = 8 - ((level % 4) + 1) * 2;
         let end_bit = start_bit + 2;
         let quadrant_index = self.bits[byte_index].get_bits(start_bit..end_bit) as usize;
         quadrant_index.try_into().unwrap()
@@ -502,7 +526,7 @@ impl Storage2D for DynamicStorage2D {
 
     unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant) {
         let byte_index = level / 4;
-        let start_bit = (level % 4) * 2;
+        let start_bit = 8 - ((level % 4) + 1) * 2;
         let end_bit = start_bit + 2;
         self.bits[byte_index].set_bits(start_bit..end_bit, cell.index() as u8);
     }
@@ -536,7 +560,7 @@ impl VariableDepthStorage2D for DynamicStorage2D {
         match self.depth {
             depth if depth % 4 == 0 => {
                 let mut ret = self.clone();
-                ret.bits.push(quadrant.index() as u8);
+                ret.bits.push((quadrant.index() as u8) << 6);
                 ret.depth += 1;
                 Some(ret)
             }
@@ -589,10 +613,15 @@ impl<B: FixedStorageType> From<MortonIndex2D<FixedDepthStorage2D<B>>>
     for MortonIndex2D<DynamicStorage2D>
 {
     fn from(fixed_index: MortonIndex2D<FixedDepthStorage2D<B>>) -> Self {
+        let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
+        #[cfg(target_endian = "little")]
+        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
+        #[cfg(target_endian = "big")]
+        let bits = native_bits.to_owned();
         Self {
             storage: DynamicStorage2D {
                 // TODO It would be epic if this is correct, but it has to be tested
-                bits: unsafe { fixed_index.storage.bits.as_vec_u8() },
+                bits,
                 depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
             },
         }
@@ -615,12 +644,75 @@ impl<B: FixedStorageType> From<MortonIndex2D<StaticStorage2D<B>>>
     for MortonIndex2D<DynamicStorage2D>
 {
     fn from(fixed_index: MortonIndex2D<StaticStorage2D<B>>) -> Self {
+        let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
+        #[cfg(target_endian = "little")]
+        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
+        #[cfg(target_endian = "big")]
+        let bits = native_bits.to_owned();
         Self {
             storage: DynamicStorage2D {
-                // TODO It would be epic if this is correct, but it has to be tested
-                bits: unsafe { fixed_index.storage.bits.as_vec_u8() },
+                bits,
                 depth: StaticStorage2D::<B>::MAX_LEVELS,
             },
+        }
+    }
+}
+
+// The conversion from a dynamic index to other index types are dependent of a runtime parameter (the depth() of the dynamic
+// index) and as such these conversions can fail at runtime. Which is why dynamic conversions only implement `TryFrom`
+
+impl<B: FixedStorageType> TryFrom<MortonIndex2D<DynamicStorage2D>>
+    for MortonIndex2D<FixedDepthStorage2D<B>>
+{
+    type Error = crate::Error;
+
+    fn try_from(value: MortonIndex2D<DynamicStorage2D>) -> Result<Self, Self::Error> {
+        if value.depth() > FixedDepthStorage2D::<B>::MAX_LEVELS {
+            Err(crate::Error::DepthLimitedExceeded {
+                max_depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
+            })
+        } else {
+            // DynamicStorage2D stores its cells as BigEndian, FixedDepthStorage2D uses the native endianness of the current
+            // machine
+            #[cfg(target_endian = "little")]
+            let endianness = Endianness::BigEndian;
+            #[cfg(target_endian = "big")]
+            let endianness = Endianness::LittleEndian;
+            let bytes = value.storage.bits.as_slice();
+            Ok(Self {
+                storage: FixedDepthStorage2D {
+                    bits: unsafe { B::from_u8_slice(bytes, endianness) },
+                },
+            })
+        }
+    }
+}
+
+impl<B: FixedStorageType> TryFrom<MortonIndex2D<DynamicStorage2D>>
+    for MortonIndex2D<StaticStorage2D<B>>
+{
+    type Error = crate::Error;
+
+    fn try_from(value: MortonIndex2D<DynamicStorage2D>) -> Result<Self, Self::Error> {
+        if value.depth() > FixedDepthStorage2D::<B>::MAX_LEVELS {
+            Err(crate::Error::DepthLimitedExceeded {
+                max_depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
+            })
+        } else {
+            // TODO There might be a way to optimize this code by directly setting the bits of the StaticStorage2D, however
+            // it involves potentially extracting less than a byte worth of data from the DynamicStorage
+            let mut ret: MortonIndex2D<StaticStorage2D<B>> = Default::default();
+            for level in 0..value.depth() {
+                // Safe because of depth check above
+                unsafe {
+                    ret.set_cell_at_level_unchecked(
+                        level,
+                        value.get_cell_at_level_unchecked(level),
+                    );
+                }
+            }
+            ret.storage.depth = value.depth() as u8;
+            Ok(ret)
         }
     }
 }
@@ -701,7 +793,13 @@ mod tests {
                     }
 
                     for level in 0..MAX_LEVELS {
-                        assert_eq!(quadrants[level], idx.get_cell_at_level(level));
+                        assert_eq!(
+                            quadrants[level],
+                            idx.get_cell_at_level(level),
+                            "Wrong quadrants at level {} in index {}",
+                            level,
+                            idx.to_string(MortonIndexNaming::CellConcatenation)
+                        );
                     }
                 }
 
@@ -719,6 +817,39 @@ mod tests {
                         .expect("Could not create Morton index from quadrants");
                     let collected_quadrants = idx.cells().collect::<Vec<_>>();
                     assert_eq!(quadrants.as_slice(), collected_quadrants.as_slice());
+                }
+
+                #[test]
+                fn ordering() {
+                    let count = 16;
+                    let mut indices = (0..count)
+                        .map(|_| {
+                            let quadrants = get_test_quadrants(MAX_LEVELS);
+                            $typename::try_from(quadrants.as_slice())
+                                .expect("Could not create Morton index from quadrants")
+                        })
+                        .collect::<Vec<_>>();
+
+                    indices.sort();
+
+                    // Indices have to be sorted in ascending order, meaning that for indices i and j with i < j,
+                    // each quadrant of index i must be <= the quadrant at the same level of index j, up until and including
+                    // the first quadrant of i that is less than j
+                    for idx in 0..(count - 1) {
+                        let i = indices[idx];
+                        let j = indices[idx + 1];
+                        for (cell_low, cell_high) in i.cells().zip(j.cells()) {
+                            if cell_low < cell_high {
+                                break;
+                            }
+                            assert!(
+                                cell_low <= cell_high,
+                                "Index {} is not <= index {}",
+                                i.to_string(MortonIndexNaming::CellConcatenation),
+                                j.to_string(MortonIndexNaming::CellConcatenation)
+                            );
+                        }
+                    }
                 }
             }
         };
@@ -830,6 +961,39 @@ mod tests {
                 fn parent_of_root_yields_none() {
                     let root = $typename::default();
                     assert_eq!(None, root.parent());
+                }
+
+                #[test]
+                fn ordering() {
+                    let count = 16;
+                    let mut indices = (0..count)
+                        .map(|_| {
+                            let quadrants = get_test_quadrants(MAX_LEVELS);
+                            $typename::try_from(quadrants.as_slice())
+                                .expect("Could not create Morton index from quadrants")
+                        })
+                        .collect::<Vec<_>>();
+
+                    indices.sort();
+
+                    // Indices have to be sorted in ascending order, meaning that for indices i and j with i < j,
+                    // each quadrant of index i must be <= the quadrant at the same level of index j, up until and including
+                    // the first quadrant of i that is less than j
+                    for idx in 0..(count - 1) {
+                        let i = indices[idx];
+                        let j = indices[idx + 1];
+                        for (cell_low, cell_high) in i.cells().zip(j.cells()) {
+                            if cell_low < cell_high {
+                                break;
+                            }
+                            assert!(
+                                cell_low <= cell_high,
+                                "Index {} is not <= index {}",
+                                i.to_string(MortonIndexNaming::CellConcatenation),
+                                j.to_string(MortonIndexNaming::CellConcatenation)
+                            );
+                        }
+                    }
                 }
             }
         };
@@ -954,6 +1118,39 @@ mod tests {
                     let root = $typename::default();
                     assert_eq!(None, root.parent());
                 }
+
+                #[test]
+                fn ordering() {
+                    let count = 16;
+                    let mut indices = (0..count)
+                        .map(|_| {
+                            let quadrants = get_test_quadrants(9);
+                            $typename::try_from(quadrants.as_slice())
+                                .expect("Could not create Morton index from quadrants")
+                        })
+                        .collect::<Vec<_>>();
+
+                    indices.sort();
+
+                    // Indices have to be sorted in ascending order, meaning that for indices i and j with i < j,
+                    // each quadrant of index i must be <= the quadrant at the same level of index j, up until and including
+                    // the first quadrant of i that is less than j
+                    for idx in 0..(count - 1) {
+                        let i = &indices[idx];
+                        let j = &indices[idx + 1];
+                        for (cell_low, cell_high) in i.cells().zip(j.cells()) {
+                            if cell_low < cell_high {
+                                break;
+                            }
+                            assert!(
+                                cell_low <= cell_high,
+                                "Index {} is not <= index {}",
+                                i.to_string(MortonIndexNaming::CellConcatenation),
+                                j.to_string(MortonIndexNaming::CellConcatenation)
+                            );
+                        }
+                    }
+                }
             }
         };
     }
@@ -982,6 +1179,20 @@ mod tests {
                 }
 
                 #[test]
+                fn convert_fixed_to_dynamic() {
+                    let quadrants = get_test_quadrants($max_levels);
+                    let fixed_index = FixedType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let dynamic_index: DynamicType = fixed_index.into();
+
+                    assert_eq!($max_levels, dynamic_index.depth());
+                    let expected_cells = fixed_index.cells().collect::<Vec<_>>();
+                    let actual_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
                 fn convert_static_to_fixed() {
                     let quadrants = get_test_quadrants($max_levels);
                     let static_index = StaticType::try_from(quadrants.as_slice())
@@ -991,6 +1202,110 @@ mod tests {
 
                     let expected_cells = static_index.cells().collect::<Vec<_>>();
                     let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_fixed_with_fewer_levels() {
+                    let quadrants = get_test_quadrants($max_levels / 2);
+                    let static_index = StaticType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let fixed_index: FixedType = static_index.into();
+
+                    // The remaining levels should be zero-filled in a conversion from static to fixed-depth index
+                    let append_cells = std::iter::once(Quadrant::Zero)
+                        .cycle()
+                        .take($max_levels / 2);
+                    let expected_cells =
+                        static_index.cells().chain(append_cells).collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_dynamic() {
+                    let quadrants = get_test_quadrants($max_levels);
+                    let static_index = StaticType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let dynamic_index: DynamicType = static_index.into();
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = static_index.cells().collect::<Vec<_>>();
+                    let actual_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_fixed() {
+                    let quadrants = get_test_quadrants($max_levels);
+                    let dynamic_index = DynamicType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let fixed_index: FixedType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    let expected_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_fixed_with_fewer_levels() {
+                    // Subtracting an odd number from the max cells to test edge cases
+                    let quadrants = get_test_quadrants($max_levels - 3);
+                    let dynamic_index = DynamicType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let fixed_index: FixedType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    let padding_cells = std::iter::repeat(Quadrant::Zero).take(3);
+                    let expected_cells = dynamic_index
+                        .cells()
+                        .chain(padding_cells)
+                        .collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_static() {
+                    let quadrants = get_test_quadrants($max_levels);
+                    let dynamic_index = DynamicType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let static_index: StaticType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    let actual_cells = static_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_static_with_fewer_levels() {
+                    // Subtracting an odd number from the max cells to test edge cases
+                    let quadrants = get_test_quadrants($max_levels - 3);
+                    let dynamic_index = DynamicType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let static_index: StaticType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    let actual_cells = static_index.cells().collect::<Vec<_>>();
                     assert_eq!(expected_cells, actual_cells);
                 }
             }
