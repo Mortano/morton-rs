@@ -1,6 +1,7 @@
 use super::Dimension;
 use nalgebra::Vector2;
 
+/// A `Dimension` that represents 2D space
 pub struct Dim2D;
 
 impl Dimension for Dim2D {
@@ -9,7 +10,7 @@ impl Dimension for Dim2D {
     //that the GridIndex is Vector2, and leave the <T> part up to the actual implementation of the Morton index, but this
     //requires generic associated types, which are unstable :(
     type GridIndex = Vector2<usize>;
-    type CellOrdering = QuadrantOrdering; 
+    type CellOrdering = QuadrantOrdering;
 }
 
 /// Ordering of quadrants in 2D space
@@ -37,7 +38,7 @@ impl Default for QuadrantOrdering {
 }
 
 /// All quadrants of a quadtree. The order of the quadrants is X-then-Y, so `Quadrant::One` represents an X-coordinate of `1`
-/// and a `Y-coordinate` of `0`. 
+/// and a `Y-coordinate` of `0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Quadrant {
     /// The first quadrant with 2D index `(0,0)`
@@ -93,14 +94,38 @@ mod tests {
 
     #[test]
     fn quadrant_orderings() {
-        assert_eq!(Vector2::new(0_usize, 0_usize), QuadrantOrdering::XY.to_index(Quadrant::Zero));
-        assert_eq!(Vector2::new(1_usize, 0_usize), QuadrantOrdering::XY.to_index(Quadrant::One));
-        assert_eq!(Vector2::new(0_usize, 1_usize), QuadrantOrdering::XY.to_index(Quadrant::Two));
-        assert_eq!(Vector2::new(1_usize, 1_usize), QuadrantOrdering::XY.to_index(Quadrant::Three));
+        assert_eq!(
+            Vector2::new(0_usize, 0_usize),
+            QuadrantOrdering::XY.to_index(Quadrant::Zero)
+        );
+        assert_eq!(
+            Vector2::new(1_usize, 0_usize),
+            QuadrantOrdering::XY.to_index(Quadrant::One)
+        );
+        assert_eq!(
+            Vector2::new(0_usize, 1_usize),
+            QuadrantOrdering::XY.to_index(Quadrant::Two)
+        );
+        assert_eq!(
+            Vector2::new(1_usize, 1_usize),
+            QuadrantOrdering::XY.to_index(Quadrant::Three)
+        );
 
-        assert_eq!(Vector2::new(0_usize, 0_usize), QuadrantOrdering::YX.to_index(Quadrant::Zero));
-        assert_eq!(Vector2::new(0_usize, 1_usize), QuadrantOrdering::YX.to_index(Quadrant::One));
-        assert_eq!(Vector2::new(1_usize, 0_usize), QuadrantOrdering::YX.to_index(Quadrant::Two));
-        assert_eq!(Vector2::new(1_usize, 1_usize), QuadrantOrdering::YX.to_index(Quadrant::Three));
+        assert_eq!(
+            Vector2::new(0_usize, 0_usize),
+            QuadrantOrdering::YX.to_index(Quadrant::Zero)
+        );
+        assert_eq!(
+            Vector2::new(0_usize, 1_usize),
+            QuadrantOrdering::YX.to_index(Quadrant::One)
+        );
+        assert_eq!(
+            Vector2::new(1_usize, 0_usize),
+            QuadrantOrdering::YX.to_index(Quadrant::Two)
+        );
+        assert_eq!(
+            Vector2::new(1_usize, 1_usize),
+            QuadrantOrdering::YX.to_index(Quadrant::Three)
+        );
     }
 }

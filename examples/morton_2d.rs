@@ -50,5 +50,13 @@ fn main() -> morton_rs::Result<()> {
         fixed_index.to_grid_index(QuadrantOrdering::XY)
     );
 
+    // You can also go the other way around: From a grid index to a Morton index. This will be most useful if you
+    // want to calculate Morton indices from points in N-d space, where you would first calculate the grid index
+    // of each point and then convert it into a Morton index
+    assert_eq!(
+        fixed_index,
+        FixedDepthMortonIndex2D8::from_grid_index(Vector2::new(5, 11), QuadrantOrdering::XY),
+    );
+
     Ok(())
 }
