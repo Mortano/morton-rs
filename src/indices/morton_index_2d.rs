@@ -22,21 +22,40 @@ pub type StaticMortonIndex2D128 = MortonIndex2D<StaticStorage2D<u128>>;
 
 pub type DynamicMortonIndex2D = MortonIndex2D<DynamicStorage2D>;
 
+/// Trait for any storage type of a 2D Morton index
 pub trait Storage2D: Default + PartialOrd + Ord + PartialEq + Eq + Debug + Hash {
+    /// Get the maximum depth that this storage type can represent. If there is no maximum depth, `None` is returned
     fn max_depth() -> Option<usize>;
+    /// Try to create an instance of this storage type from the given slice of `Quadrant`s. This operation may fail
+    /// if the number of quadrants exceeds the maximum depth of this storage type, as given by [max_depth](Self::max_depth)
     fn try_from_quadrants(quadrants: &[Quadrant]) -> Result<Self, crate::Error>;
-
+    /// The current depth of the index stored within this storage type
     fn depth(&self) -> usize;
+    /// Returns the value of the cell at `level` within this storage type
+    ///
+    /// # Safety
+    ///
+    /// This operation performs no depth checks and assumes that `level < self.depth()`. Violating this contract is UB
     unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant;
+    /// Set the value of the cell at `level` within this storage type to the given `Quadrant`
+    ///
+    /// # Safety
+    ///
+    /// This operation performs no depth checks and assumes that `level < self.depth()`. Violating this contract is UB
     unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant);
 }
 
+/// Trait for any storage type of a 2D Morton index that supports variable depth
 pub trait VariableDepthStorage2D: Storage2D {
     fn max_depth() -> Option<usize> {
         None
     }
 
+    /// Returns a storage representing the parent index of the index stored in this storage. If this storage stores the
+    /// root node (i.e. it is empty), `None` is returned instead
     fn parent(&self) -> Option<Self>;
+    /// Returns a storage representing the child at the given `quadrant` for the index stored in this storage. If this
+    /// storage is already at its maximum depth, `None` is returned instead
     fn child(&self, quadrant: Quadrant) -> Option<Self>;
 }
 

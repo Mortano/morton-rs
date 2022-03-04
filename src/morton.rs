@@ -78,7 +78,7 @@ pub trait MortonIndex: PartialOrd + Ord + PartialEq + Eq + Debug + Hash {
     /// of the cell that the `MortonIndex` corresponds to in an N-dimensional grid. There is an intimate relationship between
     /// N-ary trees and N-dimensional grids when it comes to Morton indices, which is illustrated in the following image for the
     /// 2D case:
-    /// ```ignore
+    /// ```text
     ///    ₀  ₁  ₂  ₃  ₄  ₅  ₆  ₇
     ///   ┌──┬──┬──┬──┬──┬──┬──┬──┐   ┌───────────┬─────┬─────┐
     /// ⁰ ├──┼──┼──┼──┼──┼──┼──┼──┤   │           │     │     │

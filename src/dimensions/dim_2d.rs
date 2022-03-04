@@ -14,6 +14,7 @@ impl Dimension for Dim2D {
 }
 
 /// Ordering of quadrants in 2D space
+#[derive(Debug)]
 pub enum QuadrantOrdering {
     /// 'X-major' ordering which maps quadrant 1 to index `(X=1,Y=0)`. This is the default `QuadrantOrdering`!
     XY,
@@ -37,17 +38,17 @@ impl Default for QuadrantOrdering {
     }
 }
 
-/// All quadrants of a quadtree. The order of the quadrants is X-then-Y, so `Quadrant::One` represents an X-coordinate of `1`
-/// and a `Y-coordinate` of `0`.
+/// All quadrants of a quadtree. The order of the quadrants is unspecified, all functions that care about quadrant order
+/// take an additional `QuadrantOrder` parameter to specify the order
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Quadrant {
-    /// The first quadrant with 2D index `(0,0)`
+    /// The first quadrant
     Zero,
-    /// The second quadrant with 2D index `(1,0)`
+    /// The second quadrant
     One,
-    /// The third quadrant with 2D index `(0,1)`
+    /// The third quadrant
     Two,
-    /// The foruth quadrant with 2D index `(1,1)`
+    /// The foruth quadrant
     Three,
 }
 
