@@ -1,5 +1,3 @@
-use std::ops::Shl;
-
 use morton_rs::{
     dimensions::{Quadrant, QuadrantOrdering},
     FixedDepthMortonIndex2D8, MortonIndex, MortonIndexNaming,

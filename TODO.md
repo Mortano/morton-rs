@@ -1,2 +1,2 @@
 - to_grid_index ok that it returns VectorX<usize>, or should it return Result<VectorX<usize>> because values might not fit in usize?
-- Conversions between different storage types (i.e. fixed storage to dynamic storage, static storage to fixed storage etc.)
+- Optimization in `DynamicStorage2D`: Implement `cmp` by doing a bitwise comparison instead of cell-by-cell. This requires that we implement `Bits` for `[u8]`, which might be a bit tricky

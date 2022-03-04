@@ -204,6 +204,36 @@ impl Bits for u128 {
     }
 }
 
+impl Bits for usize {
+    const BITS: usize = std::mem::size_of::<usize>() * 8;
+
+    impl_bits! {}
+
+    #[cfg(target_pointer_width = "16")]
+    unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
+        u16::from_u8_slice(bytes, endianness) as usize
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
+        u32::from_u8_slice(bytes, endianness) as usize
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
+        u64::from_u8_slice(bytes, endianness) as usize
+    }
+
+    #[cfg(not(any(
+        target_pointer_width = "16",
+        target_pointer_width = "32",
+        target_pointer_width = "64"
+    )))]
+    unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
+        std::compile_error!("Invalid pointer width on the current platform! morton-rs only supports 16-bit, 32-bit, and 64-bit platforms")
+    }
+}
+
 // TODO We could implement the following, but it is a bit more involved due to the get/set bits calls
 
 // impl <const N: usize> Bits for [u8; N] {
@@ -217,6 +247,21 @@ impl Bits for u128 {
 //         todo!()
 //     }
 // }
+
+/// Take the lower 4 bits of `val` and adds a zero behind every bit.
+/// For example `0b1101` becomes `0b10_10_00_10`
+pub fn add_zero_behind_every_bit_u8(val: u8) -> u8 {
+    add_zero_before_every_bit_u8(val) << 1
+}
+
+/// Take the lower 4 bits of `val` and adds a zero before every bit.
+/// For example `0b1101` becomes `0b01_01_00_01`
+pub fn add_zero_before_every_bit_u8(val: u8) -> u8 {
+    let mut ret = val;
+    ret = (ret | (ret << 2)) & 0b00110011;
+    ret = (ret | (ret << 1)) & 0b01010101;
+    ret
+}
 
 #[cfg(test)]
 mod tests {
@@ -292,5 +337,20 @@ mod tests {
             assert_eq!(0b101, val.get_bits(9..12));
             assert_eq!(0b11, val.get_bits(0..2));
         }
+    }
+
+    #[test]
+    fn test_expand_u8_by_2() {
+        assert_eq!(0 as u8, add_zero_behind_every_bit_u8(0 as u8));
+        assert_eq!(0b10101010 as u8, add_zero_behind_every_bit_u8(0b1111 as u8));
+        assert_eq!(0b00001010 as u8, add_zero_behind_every_bit_u8(0b0011 as u8));
+        assert_eq!(0b10000010 as u8, add_zero_behind_every_bit_u8(0b1001 as u8));
+        assert_eq!(0b10001000 as u8, add_zero_behind_every_bit_u8(0b1010 as u8));
+
+        assert_eq!(0 as u8, add_zero_before_every_bit_u8(0 as u8));
+        assert_eq!(0b01010101 as u8, add_zero_before_every_bit_u8(0b1111 as u8));
+        assert_eq!(0b00000101 as u8, add_zero_before_every_bit_u8(0b0011 as u8));
+        assert_eq!(0b01000001 as u8, add_zero_before_every_bit_u8(0b1001 as u8));
+        assert_eq!(0b01000100 as u8, add_zero_before_every_bit_u8(0b1010 as u8));
     }
 }

@@ -5,7 +5,7 @@ use std::hash::Hash;
 use nalgebra::Vector2;
 
 use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
-use crate::number::{Bits, Endianness};
+use crate::number::{add_zero_before_every_bit_u8, add_zero_behind_every_bit_u8, Bits, Endianness};
 use crate::{MortonIndex, MortonIndexNaming};
 
 pub type FixedDepthMortonIndex2D8 = MortonIndex2D<FixedDepthStorage2D<u8>>;
@@ -20,7 +20,7 @@ pub type StaticMortonIndex2D32 = MortonIndex2D<StaticStorage2D<u32>>;
 pub type StaticMortonIndex2D64 = MortonIndex2D<StaticStorage2D<u64>>;
 pub type StaticMortonIndex2D128 = MortonIndex2D<StaticStorage2D<u128>>;
 
-pub type DynamicMortonIndex = MortonIndex2D<DynamicStorage2D>;
+pub type DynamicMortonIndex2D = MortonIndex2D<DynamicStorage2D>;
 
 pub trait Storage2D: Default + PartialOrd + Ord + PartialEq + Eq + Debug + Hash {
     fn max_depth() -> Option<usize>;
@@ -78,6 +78,59 @@ impl<S: VariableDepthStorage2D> MortonIndex2D<S> {
     }
 }
 
+impl<B: FixedStorageType> MortonIndex2D<FixedDepthStorage2D<B>> {
+    /// Creates a new MortonIndex2D with fixed-depth storage from the given 2D grid index. The `grid_index` is assumed to
+    /// represent a grid with a depth equal to `FixedDepthStorage2D<B>::MAX_LEVELS`.
+    ///
+    /// # Panics
+    ///
+    /// There is an edge-case in which the fixed depth of the `FixedDepthStorage2D<B>` is greater than what a single `usize`
+    /// value in the `grid_index` can represent. In this case the code will panic.
+    pub fn from_grid_index(
+        grid_index: <Dim2D as Dimension>::GridIndex,
+        ordering: QuadrantOrdering,
+    ) -> Self {
+        let fixed_depth = FixedDepthStorage2D::<B>::MAX_LEVELS;
+        if fixed_depth > (std::mem::size_of::<usize>() * 8) {
+            panic!(
+                "Size of usize is too small for a fixed depth of {}",
+                fixed_depth
+            );
+        }
+        // Similar construction as compared to static storage, but we have a fixed depth
+
+        let x_bits = unsafe { grid_index.x.get_bits(0..fixed_depth) };
+        let y_bits = unsafe { grid_index.y.get_bits(0..fixed_depth) };
+
+        let (lower_bits, higher_bits) = match ordering {
+            QuadrantOrdering::XY => (x_bits, y_bits),
+            QuadrantOrdering::YX => (y_bits, x_bits),
+        };
+
+        let mut bits = B::default();
+        // Set bits in 8-bit chunks at a time
+        let num_chunks = (fixed_depth + 3) / 4;
+        for chunk_index in 0..num_chunks {
+            let start_bit = chunk_index * 4;
+            let end_bit = start_bit + 4;
+            let lower_chunk = unsafe { lower_bits.get_bits(start_bit..end_bit) as u8 };
+            let higher_chunk = unsafe { higher_bits.get_bits(start_bit..end_bit) as u8 };
+            let chunk = add_zero_before_every_bit_u8(lower_chunk)
+                | add_zero_behind_every_bit_u8(higher_chunk);
+            unsafe {
+                bits.set_bits(
+                    (chunk_index * 8)..((chunk_index + 1) * 8),
+                    B::from_u8(chunk),
+                );
+            }
+        }
+
+        Self {
+            storage: FixedDepthStorage2D { bits },
+        }
+    }
+}
+
 impl<B: FixedStorageType> MortonIndex2D<StaticStorage2D<B>> {
     /// Returns a Morton index with the given `depth` where all cells are zeroed (i.e. representing `Quadrant::Zero`). If
     /// the `depth` is larger than the maximum depth of the `StaticStorage2D<B>`, `None` is returned
@@ -92,12 +145,160 @@ impl<B: FixedStorageType> MortonIndex2D<StaticStorage2D<B>> {
             },
         })
     }
+
+    /// Creates a new MortonIndex2D with static storage from the given 2D grid index. The `grid_depth` parameter
+    /// describes the 'depth' of the grid as per the equation: `N = 2 ^ grid_depth`, where `N` is the number of cells
+    /// per axis in the grid. For example, a `32*32` grid has a `grid_depth` of `log2(32) = 5`. If `2 * grid_depth`
+    /// exceeds the capacity of the static storage type `B`, this returns an error.
+    pub fn from_grid_index(
+        grid_index: <Dim2D as Dimension>::GridIndex,
+        grid_depth: usize,
+        ordering: QuadrantOrdering,
+    ) -> Result<Self, crate::Error> {
+        if grid_depth > (B::BITS / 2) {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: B::BITS / 2,
+            });
+        }
+
+        // the grid_depth is equal to the number of valid bits in the X and Y fields of grid_index
+        let x_bits = unsafe { grid_index.x.get_bits(0..grid_depth) };
+        let y_bits = unsafe { grid_index.y.get_bits(0..grid_depth) };
+
+        let (lower_bits, higher_bits) = match ordering {
+            QuadrantOrdering::XY => (x_bits, y_bits),
+            QuadrantOrdering::YX => (y_bits, x_bits),
+        };
+
+        let mut bits = B::default();
+        // Set bits in 8-bit chunks at a time
+        let num_chunks = (grid_depth + 3) / 4;
+        for chunk_index in 0..num_chunks {
+            // For grid_depth values that are not divisible by 4, we have to 'align' the bits of the
+            // grid index towards the most significant bit, which I will try to explain here:
+            //   Grid index: X=11000101 Y=01101100
+            //                 |      |
+            //                MSB    LSB
+            //
+            //   The most significant bit of the grid index has to become the most significant bit of the Morton index
+            //   With a grid_depth of 8, we get the following chunks:
+            //     x1=1100 x2=0101 y1=0110 y2=1100
+            //   Which result in the following Morton index:
+            //     10 11 01 00 01 11 00 10
+            //     |_________| |_________|
+            //       x1 + y1     x2 + y2    (interleaved the bits)
+            //
+            //   Now suppose we had grid_depth = 5. This means taking the 5 LOWEST (*) bits of the grid index:
+            //     X=11000101 Y=01101100
+            //          |||||      |||||
+            //          vvvvv      vvvvv
+            //     X(5)=00101 Y(5)=01100
+            //   If we chunk these numbers into groups of 4 bits, we have two options (shown here for X(5)):
+            //     0010|1           0|0101
+            //        |                |
+            //        v                v
+            //     x1=0010 x2=1     x1'=0 x2'=0101
+            //   So which one do we choose? Remember that we always want the MSB of the grid index to end up as the
+            //   MSB of the Morton index, so the Morton index that we want is this one right here:
+            //     00 01 11 00 10
+            //     |_________| |_|
+            //   We can see that the first chunk of the Morton index corresponds to the interleaving of x1 and y1, so
+            //   the first split variant is used. Since this splits starting from the MSB, it splits our 5-bit number
+            //   into the bit ranges [1;5) and [0;1), instead of the (perhaps more intuitive?) [0;4) [4;5) variant.
+            //   Hence this weird calculation down there!
+            //
+            // (*) Why the LOWEST and not the HIGHEST bits? Because a grid index is just a number, and by saying 'This
+            //     grid index represents 5 levels' we really mean 'This grid index has only 5 bits' and thus we use the
+            //     same bit order as with regular numbers and start at the LOWEST bit
+            let end_bit = grid_depth - (chunk_index * 4);
+            let start_bit = end_bit.saturating_sub(4);
+            let lower_chunk = unsafe { lower_bits.get_bits(start_bit..end_bit) as u8 };
+            let higher_chunk = unsafe { higher_bits.get_bits(start_bit..end_bit) as u8 };
+            let chunk = add_zero_before_every_bit_u8(lower_chunk)
+                | add_zero_behind_every_bit_u8(higher_chunk);
+
+            let bits_in_current_chunk = end_bit - start_bit;
+            let end_bit_in_index = (num_chunks - chunk_index) * 8;
+            let start_bit_in_index = end_bit_in_index - 2 * bits_in_current_chunk;
+            unsafe {
+                // Maybe set the bits in BigEndian instead ?! Might require mirroring the bits of 'chunk'...
+                // Now everything is weird, the 'less-depth' thing works, but not the one with full depth?!?!
+                // Maybe use a simple implementation with 'set_cell_at_level_unchecked' as a reference?
+                bits.set_bits(start_bit_in_index..end_bit_in_index, B::from_u8(chunk));
+            }
+        }
+
+        Ok(Self {
+            storage: StaticStorage2D {
+                bits,
+                depth: grid_depth as u8,
+            },
+        })
+    }
 }
 
 impl MortonIndex2D<DynamicStorage2D> {
     pub fn zeroed(depth: usize) -> Self {
         Self {
             storage: DynamicStorage2D::zeroed(depth),
+        }
+    }
+
+    /// Creates a new MortonIndex2D with dynamic storage from the given 2D grid index. The `grid_depth` parameter
+    /// describes the 'depth' of the grid as per the equation: `N = 2 ^ grid_depth`, where `N` is the number of cells
+    /// per axis in the grid. For example, a `32*32` grid has a `grid_depth` of `log2(32) = 5`.
+    pub fn from_grid_index(
+        grid_index: <Dim2D as Dimension>::GridIndex,
+        grid_depth: usize,
+        ordering: QuadrantOrdering,
+    ) -> Self {
+        let max_bits = std::mem::size_of_val(&grid_index.x) * 8;
+        if grid_depth > (max_bits / 2) {
+            panic!(
+                "2 * grid_depth ({}) must not exceed maximum number of bits ({}) in the grid index",
+                grid_depth, max_bits
+            );
+        }
+        // the grid_depth is equal to the number of valid bits in the X and Y fields of grid_index
+        let x_bits = unsafe { grid_index.x.get_bits(0..grid_depth) };
+        let y_bits = unsafe { grid_index.y.get_bits(0..grid_depth) };
+
+        let (lower_bits, higher_bits) = match ordering {
+            QuadrantOrdering::XY => (x_bits, y_bits),
+            QuadrantOrdering::YX => (y_bits, x_bits),
+        };
+
+        // Expand bits by 2, then interleave. We do this in 4-bit chunks to prevent overflow
+        let num_chunks = (grid_depth + 3) / 4;
+        Self {
+            storage: DynamicStorage2D {
+                bits: (0..num_chunks)
+                    .map(|chunk_index| {
+                        // Same weird calculation as with StaticStorage2D, see lengthy comment there for explanation
+                        let end_bit = grid_depth - (chunk_index * 4);
+                        let start_bit = end_bit.saturating_sub(4);
+                        let lower_chunk = unsafe { lower_bits.get_bits(start_bit..end_bit) as u8 };
+                        let higher_chunk =
+                            unsafe { higher_bits.get_bits(start_bit..end_bit) as u8 };
+                        let chunk = add_zero_before_every_bit_u8(lower_chunk)
+                            | add_zero_behind_every_bit_u8(higher_chunk);
+                        // To get correct chunks with bit counts not divisible by 4, we have to set the right bits
+                        // in the u8 value (similar to what we do in StaticStorage2D)
+                        let bits_in_current_chunk = end_bit - start_bit;
+                        let end_bit_in_index = 8;
+                        let start_bit_in_index = end_bit_in_index - 2 * bits_in_current_chunk;
+                        let mut bits: u8 = 0;
+                        unsafe {
+                            // Maybe set the bits in BigEndian instead ?! Might require mirroring the bits of 'chunk'...
+                            // Now everything is weird, the 'less-depth' thing works, but not the one with full depth?!?!
+                            // Maybe use a simple implementation with 'set_cell_at_level_unchecked' as a reference?
+                            bits.set_bits(start_bit_in_index..end_bit_in_index, chunk);
+                        }
+                        bits
+                    })
+                    .collect(),
+                depth: grid_depth,
+            },
         }
     }
 }
@@ -851,6 +1052,23 @@ mod tests {
                         }
                     }
                 }
+
+                #[test]
+                fn roundtrip_grid_index() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let grid_index_xy = idx.to_grid_index(QuadrantOrdering::XY);
+                    let roundtrip_idx_xy =
+                        $typename::from_grid_index(grid_index_xy, QuadrantOrdering::XY);
+                    assert_eq!(idx, roundtrip_idx_xy);
+
+                    let grid_index_yx = idx.to_grid_index(QuadrantOrdering::YX);
+                    let roundtrip_idx_yx =
+                        $typename::from_grid_index(grid_index_yx, QuadrantOrdering::YX);
+                    assert_eq!(idx, roundtrip_idx_yx);
+                }
             }
         };
     }
@@ -994,6 +1212,50 @@ mod tests {
                             );
                         }
                     }
+                }
+
+                #[test]
+                fn roundtrip_grid_index() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let grid_index_xy = idx.to_grid_index(QuadrantOrdering::XY);
+                    let roundtrip_idx_xy =
+                        $typename::from_grid_index(grid_index_xy, MAX_LEVELS, QuadrantOrdering::XY)
+                            .expect("Can't get Morton index from grid index");
+                    assert_eq!(idx, roundtrip_idx_xy);
+
+                    let grid_index_yx = idx.to_grid_index(QuadrantOrdering::YX);
+                    let roundtrip_idx_yx =
+                        $typename::from_grid_index(grid_index_yx, MAX_LEVELS, QuadrantOrdering::YX)
+                            .expect("Can't get Morton index from grid index");
+                    assert_eq!(idx, roundtrip_idx_yx);
+                }
+
+                #[test]
+                fn roundtrip_grid_index_with_odd_levels() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS - 3);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let grid_index_xy = idx.to_grid_index(QuadrantOrdering::XY);
+                    let roundtrip_idx_xy = $typename::from_grid_index(
+                        grid_index_xy,
+                        MAX_LEVELS - 3,
+                        QuadrantOrdering::XY,
+                    )
+                    .expect("Can't get Morton index from grid index");
+                    assert_eq!(idx, roundtrip_idx_xy);
+
+                    let grid_index_yx = idx.to_grid_index(QuadrantOrdering::YX);
+                    let roundtrip_idx_yx = $typename::from_grid_index(
+                        grid_index_yx,
+                        MAX_LEVELS - 3,
+                        QuadrantOrdering::YX,
+                    )
+                    .expect("Can't get Morton index from grid index");
+                    assert_eq!(idx, roundtrip_idx_yx);
                 }
             }
         };
@@ -1150,6 +1412,40 @@ mod tests {
                             );
                         }
                     }
+                }
+
+                #[test]
+                fn roundtrip_grid_index() {
+                    let quadrants = get_test_quadrants(32);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let grid_index_xy = idx.to_grid_index(QuadrantOrdering::XY);
+                    let roundtrip_idx_xy =
+                        $typename::from_grid_index(grid_index_xy, 32, QuadrantOrdering::XY);
+                    assert_eq!(idx, roundtrip_idx_xy);
+
+                    let grid_index_yx = idx.to_grid_index(QuadrantOrdering::YX);
+                    let roundtrip_idx_yx =
+                        $typename::from_grid_index(grid_index_yx, 32, QuadrantOrdering::YX);
+                    assert_eq!(idx, roundtrip_idx_yx);
+                }
+
+                #[test]
+                fn roundtrip_grid_index_with_odd_levels() {
+                    let quadrants = get_test_quadrants(29);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let grid_index_xy = idx.to_grid_index(QuadrantOrdering::XY);
+                    let roundtrip_idx_xy =
+                        $typename::from_grid_index(grid_index_xy, 29, QuadrantOrdering::XY);
+                    assert_eq!(idx, roundtrip_idx_xy);
+
+                    let grid_index_yx = idx.to_grid_index(QuadrantOrdering::YX);
+                    let roundtrip_idx_yx =
+                        $typename::from_grid_index(grid_index_yx, 29, QuadrantOrdering::YX);
+                    assert_eq!(idx, roundtrip_idx_yx);
                 }
             }
         };
@@ -1328,11 +1624,183 @@ mod tests {
     test_static!(StaticMortonIndex2D64, static_morton_index_2d64, 32);
     test_static!(StaticMortonIndex2D128, static_morton_index_2d128, 64);
 
-    test_dynamic!(DynamicMortonIndex, dynamic_morton_index_2d);
+    test_dynamic!(DynamicMortonIndex2D, dynamic_morton_index_2d);
 
     test_conversions!(4, u8, conversions_2d8);
     test_conversions!(8, u16, conversions_2d16);
     test_conversions!(16, u32, conversions_2d32);
     test_conversions!(32, u64, conversions_2d64);
     test_conversions!(64, u128, conversions_2d128);
+
+    // Test the from_grid_index functions separately with predefined values
+    #[test]
+    fn from_grid_index_fixed_u16() {
+        // u16 means we have a 2^8 * 2^8 grid
+        // We specify the grid_index as a bit pattern here, because it makes it easier to see what value
+        // we are expecting!
+        let grid_index = Vector2::new(0b11000101, 0b01101100);
+        let morton_index_xy =
+            FixedDepthMortonIndex2D16::from_grid_index(grid_index, QuadrantOrdering::XY);
+        let morton_index_yx =
+            FixedDepthMortonIndex2D16::from_grid_index(grid_index, QuadrantOrdering::YX);
+
+        // These two values are simply the bits of the X and Y index interleaved, one time with X in the lower bits,
+        // one time with Y in the lower bits
+        let _expected_xy = 0b01111000_10110001;
+        let _expected_yx = 0b10110100_01110010;
+        // From there, we take every two bits and convert them into an index, either little endian or big endian, to get
+        // the expected quadrants. The first quadrant in XY order is `01` and hence `One`, in YX order it is `10` and hence
+        // `Two`
+        let expected_quadrants_xy = vec![
+            Quadrant::One,
+            Quadrant::Three,
+            Quadrant::Two,
+            Quadrant::Zero,
+            Quadrant::Two,
+            Quadrant::Three,
+            Quadrant::Zero,
+            Quadrant::One,
+        ];
+        let expected_quadrants_yx = vec![
+            Quadrant::Two,
+            Quadrant::Three,
+            Quadrant::One,
+            Quadrant::Zero,
+            Quadrant::One,
+            Quadrant::Three,
+            Quadrant::Zero,
+            Quadrant::Two,
+        ];
+
+        let xy_quadrants = morton_index_xy.cells().collect::<Vec<_>>();
+        let yx_quadrants = morton_index_yx.cells().collect::<Vec<_>>();
+
+        assert_eq!(expected_quadrants_xy, xy_quadrants);
+        assert_eq!(expected_quadrants_yx, yx_quadrants);
+    }
+
+    #[test]
+    fn from_grid_index_static_u16() {
+        // TODO Test fails, I think because we set the quadrants in the wrong order. Level 5 means we want `0b11000` instead
+        // of `0b00101`
+        // Then again, my intuition might be wrong, 5 bits of `0b11000101` IS `0b00101` on little endian. This is counter-intuitive
+        // with how it looks in the code, we might have to specify this in the documentation!
+        let grid_index = Vector2::new(0b11000101, 0b01101100);
+        let index_full_depth_xy =
+            StaticMortonIndex2D16::from_grid_index(grid_index, 8, QuadrantOrdering::XY)
+                .expect("Could not create Morton index from grid index");
+        let index_full_depth_yx =
+            StaticMortonIndex2D16::from_grid_index(grid_index, 8, QuadrantOrdering::YX)
+                .expect("Could not create Morton index from grid index");
+
+        let index_less_depth_xy =
+            StaticMortonIndex2D16::from_grid_index(grid_index, 5, QuadrantOrdering::XY)
+                .expect("Could not create Morton index from grid index");
+        let index_less_depth_yx =
+            StaticMortonIndex2D16::from_grid_index(grid_index, 5, QuadrantOrdering::YX)
+                .expect("Could not create Morton index from grid index");
+
+        // For quadrant values, see the from_grid_index_fixed_u16 test
+        let expected_quadrants_xy = vec![
+            Quadrant::One,
+            Quadrant::Three,
+            Quadrant::Two,
+            Quadrant::Zero,
+            Quadrant::Two,
+            Quadrant::Three,
+            Quadrant::Zero,
+            Quadrant::One,
+        ];
+        let expected_quadrants_yx = vec![
+            Quadrant::Two,
+            Quadrant::Three,
+            Quadrant::One,
+            Quadrant::Zero,
+            Quadrant::One,
+            Quadrant::Three,
+            Quadrant::Zero,
+            Quadrant::Two,
+        ];
+
+        assert_eq!(
+            expected_quadrants_xy,
+            index_full_depth_xy.cells().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected_quadrants_yx,
+            index_full_depth_yx.cells().collect::<Vec<_>>()
+        );
+
+        // !!! We don't expect quadrants 0..5 because the from_grid_index function only looks at the `grid_depth` LOWEST
+        // bits of the grid index, which is equal to the deeper quadrants of a larger index!
+        assert_eq!(
+            expected_quadrants_xy[3..8].to_owned(),
+            index_less_depth_xy.cells().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected_quadrants_yx[3..8].to_owned(),
+            index_less_depth_yx.cells().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn from_grid_index_dynamic() {
+        // Let's use a grid_depth of 8 as with the other tests
+        // We specify the grid_index as a bit pattern here, because it makes it easier to see what value
+        // we are expecting!
+        let grid_depth = 8;
+        let grid_index = Vector2::new(0b11000101, 0b01101100);
+        let morton_index_xy =
+            DynamicMortonIndex2D::from_grid_index(grid_index, grid_depth, QuadrantOrdering::XY);
+        let morton_index_yx =
+            DynamicMortonIndex2D::from_grid_index(grid_index, grid_depth, QuadrantOrdering::YX);
+
+        let index_less_depth_xy =
+            DynamicMortonIndex2D::from_grid_index(grid_index, 5, QuadrantOrdering::XY);
+        let index_less_depth_yx =
+            DynamicMortonIndex2D::from_grid_index(grid_index, 5, QuadrantOrdering::YX);
+
+        // These two values are simply the bits of the X and Y index interleaved, one time with X in the lower bits,
+        // one time with Y in the lower bits
+        let _expected_xy = 0b01111000_10110001;
+        let _expected_yx = 0b10110100_01110010;
+        // From there, we take every two bits and convert them into an index, either little endian or big endian, to get
+        // the expected quadrants. The first quadrant in XY order is `01` and hence `One`, in YX order it is `10` and hence
+        // `Two`
+        let expected_quadrants_xy = vec![
+            Quadrant::One,
+            Quadrant::Three,
+            Quadrant::Two,
+            Quadrant::Zero,
+            Quadrant::Two,
+            Quadrant::Three,
+            Quadrant::Zero,
+            Quadrant::One,
+        ];
+        let expected_quadrants_yx = vec![
+            Quadrant::Two,
+            Quadrant::Three,
+            Quadrant::One,
+            Quadrant::Zero,
+            Quadrant::One,
+            Quadrant::Three,
+            Quadrant::Zero,
+            Quadrant::Two,
+        ];
+
+        let xy_quadrants = morton_index_xy.cells().collect::<Vec<_>>();
+        let yx_quadrants = morton_index_yx.cells().collect::<Vec<_>>();
+
+        assert_eq!(expected_quadrants_xy, xy_quadrants);
+        assert_eq!(expected_quadrants_yx, yx_quadrants);
+
+        assert_eq!(
+            expected_quadrants_xy[3..8].to_owned(),
+            index_less_depth_xy.cells().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            expected_quadrants_yx[3..8].to_owned(),
+            index_less_depth_yx.cells().collect::<Vec<_>>()
+        );
+    }
 }
