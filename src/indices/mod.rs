@@ -7,6 +7,7 @@ pub use self::morton_index_3d::*;
 use crate::dimensions::Dimension;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::marker::PhantomData;
 
 // Unify the storage traits (FixedDepth, Static, Dynamic) for any dimension here
 // Unify cell iterator for any dimensions (should work by just calling the appropriate functions on the storage)
@@ -46,4 +47,24 @@ pub trait VariableDepthStorage<D: Dimension>: Storage<D> {
     /// Returns a storage representing the child at the given `cell` for the index stored in this storage. If this
     /// storage is already at its maximum depth, `None` is returned instead
     fn child(&self, cell: D::Cell) -> Option<Self>;
+}
+
+/// Iterator over cells of a Morton index
+pub struct CellIter<'a, D: Dimension, S: Storage<D>> {
+    storage: &'a S,
+    index: usize,
+    _phantom: PhantomData<D>,
+}
+
+impl<'a, D: Dimension, S: Storage<D>> Iterator for CellIter<'a, D, S> {
+    type Item = D::Cell;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.storage.depth() {
+            return None;
+        }
+        let index = self.index;
+        self.index += 1;
+        unsafe { Some(self.storage.get_cell_at_level_unchecked(index)) }
+    }
 }

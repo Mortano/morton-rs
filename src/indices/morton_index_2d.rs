@@ -6,7 +6,7 @@ use nalgebra::Vector2;
 
 use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
 use crate::number::{add_zero_before_every_bit_u8, add_zero_behind_every_bit_u8, Bits, Endianness};
-use crate::{MortonIndex, MortonIndexNaming, Storage, VariableDepthStorage};
+use crate::{CellIter, MortonIndex, MortonIndexNaming, Storage, VariableDepthStorage};
 
 pub type FixedDepthMortonIndex2D8 = MortonIndex2D<FixedDepthStorage2D<u8>>;
 pub type FixedDepthMortonIndex2D16 = MortonIndex2D<FixedDepthStorage2D<u16>>;
@@ -436,31 +436,14 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Quadrant]> for FixedDepthStorage2D<B>
 
 impl<'a, B: FixedStorageType> IntoIterator for &'a FixedDepthStorage2D<B> {
     type Item = Quadrant;
-    type IntoIter = CellIter2D<'a, FixedDepthStorage2D<B>>;
+    type IntoIter = CellIter<'a, Dim2D, FixedDepthStorage2D<B>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        CellIter2D {
+        CellIter {
             index: 0,
             storage: &self,
+            _phantom: Default::default(),
         }
-    }
-}
-
-pub struct CellIter2D<'a, S: Storage<Dim2D>> {
-    storage: &'a S,
-    index: usize,
-}
-
-impl<'a, S: Storage<Dim2D>> Iterator for CellIter2D<'a, S> {
-    type Item = Quadrant;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index == self.storage.depth() {
-            return None;
-        }
-        let index = self.index;
-        self.index += 1;
-        unsafe { Some(self.storage.get_cell_at_level_unchecked(index)) }
     }
 }
 
@@ -621,12 +604,13 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Quadrant]> for StaticStorage2D<B> {
 
 impl<'a, B: FixedStorageType> IntoIterator for &'a StaticStorage2D<B> {
     type Item = Quadrant;
-    type IntoIter = CellIter2D<'a, StaticStorage2D<B>>;
+    type IntoIter = CellIter<'a, Dim2D, StaticStorage2D<B>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        CellIter2D {
+        CellIter {
             index: 0,
             storage: self,
+            _phantom: Default::default(),
         }
     }
 }
@@ -779,12 +763,13 @@ impl<'a> TryFrom<&'a [Quadrant]> for DynamicStorage2D {
 
 impl<'a> IntoIterator for &'a DynamicStorage2D {
     type Item = Quadrant;
-    type IntoIter = CellIter2D<'a, DynamicStorage2D>;
+    type IntoIter = CellIter<'a, Dim2D, DynamicStorage2D>;
 
     fn into_iter(self) -> Self::IntoIter {
-        CellIter2D {
+        CellIter {
             index: 0,
             storage: self,
+            _phantom: Default::default(),
         }
     }
 }
@@ -821,7 +806,6 @@ impl<B: FixedStorageType> From<MortonIndex2D<FixedDepthStorage2D<B>>>
         let bits = native_bits.to_owned();
         Self {
             storage: DynamicStorage2D {
-                // TODO It would be epic if this is correct, but it has to be tested
                 bits,
                 depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
             },
