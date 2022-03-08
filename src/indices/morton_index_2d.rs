@@ -6,7 +6,10 @@ use nalgebra::Vector2;
 
 use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
 use crate::number::{add_zero_before_every_bit_u8, add_zero_behind_every_bit_u8, Bits, Endianness};
-use crate::{CellIter, MortonIndex, MortonIndexNaming, Storage, VariableDepthStorage};
+use crate::{
+    CellIter, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, Storage,
+    VariableDepthStorage,
+};
 
 /// A 2D Morton index with a fixed depth of 4 levels (using a single `u8` value as storage)
 pub type FixedDepthMortonIndex2D8 = MortonIndex2D<FixedDepthStorage2D<u8>>;
@@ -379,50 +382,25 @@ impl<S: Storage<Dim2D>> MortonIndex for MortonIndex2D<S> {
     }
 }
 
-pub trait FixedStorageType:
-    Bits + Copy + Clone + PartialEq + Eq + PartialOrd + Ord + Default + Debug + Hash
-{
-}
-
-impl<B: Bits + Copy + Clone + PartialEq + Eq + PartialOrd + Ord + Default + Debug + Hash>
-    FixedStorageType for B
-{
-}
-
 /// Storage for a 2D Morton index that always stores a Morton index with a fixed depth (fixed number of levels)
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FixedDepthStorage2D<B: FixedStorageType> {
     bits: B,
 }
 
-impl<B: FixedStorageType> FixedDepthStorage2D<B> {
-    /// Maximum number of levels that can be represented with this `FixedDepthStorage2D`. The level depends on the number of bits
-    /// that the `B` generic parameter can store
+impl<B: FixedStorageType> FixedDepthStorage for FixedDepthStorage2D<B> {
+    type Dimension = Dim2D;
+    type BitType = B;
+
     const MAX_LEVELS: usize = B::BITS / 2;
-}
+    const DIMENSIONALITY: usize = 2;
 
-impl<B: FixedStorageType> Storage<Dim2D> for FixedDepthStorage2D<B> {
-    fn max_depth() -> Option<usize> {
-        Some(Self::MAX_LEVELS)
+    fn bits(&self) -> &Self::BitType {
+        &self.bits
     }
 
-    fn depth(&self) -> usize {
-        Self::MAX_LEVELS
-    }
-
-    unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant {
-        let start_bit = B::BITS - ((level + 1) * 2);
-        let end_bit = start_bit + 2;
-        let bits = self.bits.get_bits(start_bit..end_bit).as_u8() as usize;
-        Quadrant::try_from(bits).unwrap()
-    }
-
-    unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant) {
-        let cell_index: usize = cell.into();
-        let start_bit = B::BITS - ((level + 1) * 2);
-        let end_bit = start_bit + 2;
-        self.bits
-            .set_bits(start_bit..end_bit, B::from_u8(cell_index as u8));
+    fn bits_mut(&mut self) -> &mut Self::BitType {
+        &mut self.bits
     }
 }
 

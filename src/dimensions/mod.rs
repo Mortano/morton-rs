@@ -7,7 +7,7 @@ pub use self::dim_3d::*;
 /// Trait for the dimensionality of a Morton index
 pub trait Dimension {
     /// What is the type of each cell entry? This would be a quadrant in the 2D case, or an octant in the 3D case etc.
-    type Cell;
+    type Cell: TryFrom<usize, Error = crate::Error> + Into<usize>;
     /// Type that represents a grid index for this dimension. For 2D, this will be a Vector2, for 3D a Vector3, and so on.
     type GridIndex;
     /// Type that defines different possible orderings for cells. With this, a mapping between the index of a cell and its
