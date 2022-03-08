@@ -2,43 +2,47 @@
 // The biggest hurdle I see is that many of the types are different, and the implementations will be different
 // for some of the functions that have to care about dimensionality...
 
-use crate::dimensions::Octant;
-use std::fmt::Debug;
-use std::hash::Hash;
+use crate::{
+    dimensions::{Dim3D, Octant},
+    Storage, VariableDepthStorage,
+};
 
-/// Trait for any storage type of a 3D Morton index
-pub trait Storage3D: Default + PartialOrd + Ord + PartialEq + Eq + Debug + Hash {
-    /// Get the maximum depth that this storage type can represent. If there is no maximum depth, `None` is returned
-    fn max_depth() -> Option<usize>;
-    /// Try to create an instance of this storage type from the given slice of `Octant`s. This operation may fail
-    /// if the number of octants exceeds the maximum depth of this storage type, as given by [max_depth](Self::max_depth)
-    fn try_from_octants(octants: &[Octant]) -> Result<Self, crate::Error>;
-    /// The current depth of the index stored within this storage type
-    fn depth(&self) -> usize;
-    /// Returns the value of the cell at `level` within this storage type
-    ///
-    /// # Safety
-    ///
-    /// This operation performs no depth checks and assumes that `level < self.depth()`. Violating this contract is UB
-    unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Octant;
-    /// Set the value of the cell at `level` within this storage type to the given `Octant`
-    ///
-    /// # Safety
-    ///
-    /// This operation performs no depth checks and assumes that `level < self.depth()`. Violating this contract is UB
-    unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Octant);
+/// A §D Morton index. This represents a single node inside an octree. The depth of the node and the maximum storage
+/// capacity of this type depend on the generic `Storage` type
+#[derive(Default, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub struct MortonIndex3D<S: Storage<Dim3D>> {
+    storage: S,
 }
 
-/// Trait for any storage type of a 3D Morton index that supports variable depth
-pub trait VariableDepthStorage3D: Storage3D {
-    fn max_depth() -> Option<usize> {
-        None
+impl<S: Storage<Dim3D> + Clone> Clone for MortonIndex3D<S> {
+    fn clone(&self) -> Self {
+        Self {
+            storage: self.storage.clone(),
+        }
+    }
+}
+
+impl<S: Storage<Dim3D> + Copy> Copy for MortonIndex3D<S> {}
+
+impl<'a, S: Storage<Dim3D> + 'a> MortonIndex3D<S>
+where
+    &'a S: IntoIterator<Item = Octant>,
+{
+    pub fn cells(&'a self) -> <&'a S as IntoIterator>::IntoIter {
+        self.storage.into_iter()
+    }
+}
+
+impl<S: VariableDepthStorage<Dim3D>> MortonIndex3D<S> {
+    /// Returns a Morton index for the child `octant` of this Morton index. If this index is already at
+    /// the maximum depth, `None` is returned instead
+    pub fn child(&self, octant: Octant) -> Option<Self> {
+        self.storage.child(octant).map(|storage| Self { storage })
     }
 
-    /// Returns a storage representing the parent index of the index stored in this storage. If this storage stores the
-    /// root node (i.e. it is empty), `None` is returned instead
-    fn parent(&self) -> Option<Self>;
-    /// Returns a storage representing the child at the given `octant` for the index stored in this storage. If this
-    /// storage is already at its maximum depth, `None` is returned instead
-    fn child(&self, octant: Octant) -> Option<Self>;
+    /// Returns a Morton index for the parent node of this Morton index. If this index represents the root
+    /// node, `None` is returned instead
+    pub fn parent(&self) -> Option<Self> {
+        self.storage.parent().map(|storage| Self { storage })
+    }
 }
