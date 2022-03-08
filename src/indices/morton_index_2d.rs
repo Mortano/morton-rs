@@ -8,20 +8,31 @@ use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
 use crate::number::{add_zero_before_every_bit_u8, add_zero_behind_every_bit_u8, Bits, Endianness};
 use crate::{CellIter, MortonIndex, MortonIndexNaming, Storage, VariableDepthStorage};
 
+/// A 2D Morton index with a fixed depth of 4 levels (using a single `u8` value as storage)
 pub type FixedDepthMortonIndex2D8 = MortonIndex2D<FixedDepthStorage2D<u8>>;
+/// A 2D Morton index with a fixed depth of 8 levels (using a single `u16` value as storage)
 pub type FixedDepthMortonIndex2D16 = MortonIndex2D<FixedDepthStorage2D<u16>>;
+/// A 2D Morton index with a fixed depth of 16 levels (using a single `u32` value as storage)
 pub type FixedDepthMortonIndex2D32 = MortonIndex2D<FixedDepthStorage2D<u32>>;
+/// A 2D Morton index with a fixed depth of 32 levels (using a single `u64` value as storage)
 pub type FixedDepthMortonIndex2D64 = MortonIndex2D<FixedDepthStorage2D<u64>>;
+/// A 2D Morton index with a fixed depth of 64 levels (using a single `u128` value as storage)
 pub type FixedDepthMortonIndex2D128 = MortonIndex2D<FixedDepthStorage2D<u128>>;
-
+/// A 2D Morton index with variable depth, but a statically-determined maximum depth of 4 levels (using a single `u8` value as storage)
 pub type StaticMortonIndex2D8 = MortonIndex2D<StaticStorage2D<u8>>;
+/// A 2D Morton index with variable depth, but a statically-determined maximum depth of 8 levels (using a single `u16` value as storage)
 pub type StaticMortonIndex2D16 = MortonIndex2D<StaticStorage2D<u16>>;
+/// A 2D Morton index with variable depth, but a statically-determined maximum depth of 16 levels (using a single `u32` value as storage)
 pub type StaticMortonIndex2D32 = MortonIndex2D<StaticStorage2D<u32>>;
+/// A 2D Morton index with variable depth, but a statically-determined maximum depth of 32 levels (using a single `u64` value as storage)
 pub type StaticMortonIndex2D64 = MortonIndex2D<StaticStorage2D<u64>>;
+/// A 2D Morton index with variable depth, but a statically-determined maximum depth of 64 levels (using a single `u128` value as storage)
 pub type StaticMortonIndex2D128 = MortonIndex2D<StaticStorage2D<u128>>;
-
+/// A 2D Morton index with variable depth. It uses a `Vec` as storage and can represent an unlimited number of cells
 pub type DynamicMortonIndex2D = MortonIndex2D<DynamicStorage2D>;
 
+/// A 2D Morton index. This represents a single node inside a quadtree. The depth of the node and the maximum storage
+/// capacity of this type depend on the generic `Storage` type
 #[derive(Default, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct MortonIndex2D<S: Storage<Dim2D>> {
     storage: S,
