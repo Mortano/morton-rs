@@ -9,7 +9,7 @@ macro_rules! impl_bits {
             // (see here: https://users.rust-lang.org/t/intentionally-overflow-on-shift/11859)
             // So we have to use a trick to get the correct bit mask here
             let mask = (!(0 as Self)).checked_shr(shift_right as u32).unwrap_or(0);
-            (*self >> shift) & mask
+            self.checked_shr(shift as u32).unwrap_or(0) & mask
         }
         unsafe fn get_bits_as_usize(&self, bit_range: Range<usize>) -> usize {
             self.get_bits(bit_range) as usize

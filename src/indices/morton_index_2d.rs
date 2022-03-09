@@ -475,11 +475,14 @@ impl<B: FixedStorageType> PartialOrd for StaticStorage2D<B> {
 
 impl<B: FixedStorageType> Ord for StaticStorage2D<B> {
     fn cmp(&self, other: &Self) -> Ordering {
+        let end_bit = B::BITS;
+        let self_start_bit = end_bit - (self.depth() * 2);
+        let other_start_bit = end_bit - (other.depth() * 2);
         match self.depth().cmp(&other.depth()) {
             Ordering::Less => {
                 // Only compare bits up to 2*self.depth(). If less or equal, self is by definition less
-                let self_bits = unsafe { self.bits.get_bits(0..(self.depth() * 2)) };
-                let other_bits = unsafe { other.bits.get_bits(0..(self.depth() * 2)) };
+                let self_bits = unsafe { self.bits.get_bits(self_start_bit..end_bit) };
+                let other_bits = unsafe { other.bits.get_bits(self_start_bit..end_bit) };
                 if self_bits > other_bits {
                     Ordering::Greater
                 } else {
@@ -487,15 +490,15 @@ impl<B: FixedStorageType> Ord for StaticStorage2D<B> {
                 }
             }
             Ordering::Equal => {
-                let self_bits = unsafe { self.bits.get_bits(0..(self.depth() * 2)) };
-                let other_bits = unsafe { other.bits.get_bits(0..(other.depth() * 2)) };
+                let self_bits = unsafe { self.bits.get_bits(self_start_bit..end_bit) };
+                let other_bits = unsafe { other.bits.get_bits(other_start_bit..end_bit) };
                 self_bits.cmp(&other_bits)
             }
             Ordering::Greater => {
                 // This is the opposite of the Ordering::Less case, we compare bits up to 2*other.depth() and
                 // if self is greater or equal, other is less, otherwise other is greater
-                let self_bits = unsafe { self.bits.get_bits(0..(other.depth() * 2)) };
-                let other_bits = unsafe { other.bits.get_bits(0..(other.depth() * 2)) };
+                let self_bits = unsafe { self.bits.get_bits(other_start_bit..end_bit) };
+                let other_bits = unsafe { other.bits.get_bits(other_start_bit..end_bit) };
                 if self_bits >= other_bits {
                     Ordering::Greater
                 } else {
@@ -1111,10 +1114,12 @@ mod tests {
 
                 #[test]
                 fn ordering() {
-                    let count = 16;
+                    let count = 128;
+                    let mut rng = thread_rng();
                     let mut indices = (0..count)
                         .map(|_| {
-                            let quadrants = get_test_quadrants(MAX_LEVELS);
+                            let rnd_levels = rng.gen_range(0..MAX_LEVELS);
+                            let quadrants = get_test_quadrants(rnd_levels);
                             $typename::try_from(quadrants.as_slice())
                                 .expect("Could not create Morton index from quadrants")
                         })

@@ -2,13 +2,15 @@
 // The biggest hurdle I see is that many of the types are different, and the implementations will be different
 // for some of the functions that have to care about dimensionality...
 
+use std::cmp::Ordering;
+
 use nalgebra::Vector3;
 
 use crate::{
     dimensions::{Dim3D, Dimension, Octant, OctantOrdering},
     number::{add_two_zeroes_before_every_bit_u8, Bits},
-    CellIter, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, Storage,
-    StorageType, VariableDepthStorage,
+    CellIter, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, StaticStorage,
+    Storage, StorageType, VariableDepthStorage,
 };
 
 pub type FixedDepthMortonIndex3D8 = MortonIndex3D<FixedDepthStorage3D<u8>>;
@@ -250,6 +252,81 @@ impl<'a, B: FixedStorageType> IntoIterator for &'a FixedDepthStorage3D<B> {
         }
     }
 }
+
+#[derive(Default, Debug, Clone, Copy, Hash)]
+pub struct StaticStorage3D<B: FixedStorageType> {
+    bits: B,
+    depth: u8,
+}
+
+impl<B: FixedStorageType> Storage<Dim3D> for StaticStorage3D<B> {
+    type StorageType = StaticStorage<Dim3D, B>;
+    type Bits = B;
+
+    fn bits(&self) -> &Self::Bits {
+        &self.bits
+    }
+
+    fn bits_mut(&mut self) -> &mut Self::Bits {
+        &mut self.bits
+    }
+
+    fn depth(&self) -> usize {
+        self.depth as usize
+    }
+}
+
+impl<B: FixedStorageType> PartialOrd for StaticStorage3D<B> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<B: FixedStorageType> Ord for StaticStorage3D<B> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let end_bit = B::BITS;
+        let self_start_bit = end_bit - (self.depth() * Dim3D::DIMENSIONALITY);
+        let other_start_bit = end_bit - (other.depth() * Dim3D::DIMENSIONALITY);
+        match self.depth().cmp(&other.depth()) {
+            Ordering::Less => {
+                // Only compare bits up to 2*self.depth(). If less or equal, self is by definition less
+                let self_bits = unsafe { self.bits.get_bits(self_start_bit..end_bit) };
+                let other_bits = unsafe { other.bits.get_bits(self_start_bit..end_bit) };
+                if self_bits > other_bits {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+            Ordering::Equal => {
+                let self_bits = unsafe { self.bits.get_bits(self_start_bit..end_bit) };
+                let other_bits = unsafe { other.bits.get_bits(other_start_bit..end_bit) };
+                self_bits.cmp(&other_bits)
+            }
+            Ordering::Greater => {
+                // This is the opposite of the Ordering::Less case, we compare bits up to 2*other.depth() and
+                // if self is greater or equal, other is less, otherwise other is greater
+                let self_bits = unsafe { self.bits.get_bits(other_start_bit..end_bit) };
+                let other_bits = unsafe { other.bits.get_bits(other_start_bit..end_bit) };
+                if self_bits >= other_bits {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+        }
+    }
+}
+
+impl<B: FixedStorageType> PartialEq for StaticStorage3D<B> {
+    fn eq(&self, other: &Self) -> bool {
+        // Technically we should compare self.bits.bits(B::BITS..(B::BITS - 3*self.depth)) instead of all bits,
+        // but all the operations that create a StaticStorage3D make sure that the 'waste' bits are always zero
+        self.bits == other.bits && self.depth == other.depth
+    }
+}
+
+impl<B: FixedStorageType> Eq for StaticStorage3D<B> {}
 
 #[cfg(test)]
 mod tests {
