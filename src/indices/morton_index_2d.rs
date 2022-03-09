@@ -7,8 +7,8 @@ use nalgebra::Vector2;
 use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
 use crate::number::{add_zero_before_every_bit_u8, add_zero_behind_every_bit_u8, Bits, Endianness};
 use crate::{
-    CellIter, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, Storage,
-    VariableDepthStorage,
+    CellIter, DynamicStorage, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming,
+    StaticStorage, Storage, StorageType, VariableDepthStorage,
 };
 
 /// A 2D Morton index with a fixed depth of 4 levels (using a single `u8` value as storage)
@@ -86,7 +86,7 @@ impl<B: FixedStorageType> MortonIndex2D<FixedDepthStorage2D<B>> {
         grid_index: <Dim2D as Dimension>::GridIndex,
         ordering: QuadrantOrdering,
     ) -> Self {
-        let fixed_depth = FixedDepthStorage2D::<B>::MAX_LEVELS;
+        let fixed_depth = <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS;
         if fixed_depth > (std::mem::size_of::<usize>() * 8) {
             panic!(
                 "Size of usize is too small for a fixed depth of {}",
@@ -131,7 +131,7 @@ impl<B: FixedStorageType> MortonIndex2D<StaticStorage2D<B>> {
     /// Returns a Morton index with the given `depth` where all cells are zeroed (i.e. representing `Quadrant::Zero`). If
     /// the `depth` is larger than the maximum depth of the `StaticStorage2D<B>`, `None` is returned
     pub fn zeroed(depth: u8) -> Option<Self> {
-        if depth as usize > StaticStorage2D::<B>::MAX_LEVELS {
+        if depth as usize > <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return None;
         }
         Some(Self {
@@ -388,19 +388,20 @@ pub struct FixedDepthStorage2D<B: FixedStorageType> {
     bits: B,
 }
 
-impl<B: FixedStorageType> FixedDepthStorage for FixedDepthStorage2D<B> {
-    type Dimension = Dim2D;
-    type BitType = B;
+impl<B: FixedStorageType> Storage<Dim2D> for FixedDepthStorage2D<B> {
+    type StorageType = FixedDepthStorage<Dim2D, B>;
+    type Bits = B;
 
-    const MAX_LEVELS: usize = B::BITS / 2;
-    const DIMENSIONALITY: usize = 2;
-
-    fn bits(&self) -> &Self::BitType {
+    fn bits(&self) -> &Self::Bits {
         &self.bits
     }
 
-    fn bits_mut(&mut self) -> &mut Self::BitType {
+    fn bits_mut(&mut self) -> &mut Self::Bits {
         &mut self.bits
+    }
+
+    fn depth(&self) -> usize {
+        FixedDepthStorage::<Dim2D, B>::MAX_LEVELS
     }
 }
 
@@ -408,9 +409,9 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Quadrant]> for FixedDepthStorage2D<B>
     type Error = crate::Error;
 
     fn try_from(quadrants: &'a [Quadrant]) -> Result<Self, Self::Error> {
-        if quadrants.len() > Self::MAX_LEVELS {
+        if quadrants.len() > <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return Err(crate::Error::DepthLimitedExceeded {
-                max_depth: Self::MAX_LEVELS,
+                max_depth: <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS,
             });
         }
         let mut ret: Self = Default::default();
@@ -448,22 +449,20 @@ pub struct StaticStorage2D<B: FixedStorageType> {
     depth: u8,
 }
 
-impl<B: FixedStorageType> StaticStorage2D<B> {
-    const MAX_LEVELS: usize = if B::BITS > 512 {
-        // Max representable value of the `u8` parameter `depth`. We could go larger by using some dependent type
-        // for storing `depth`, but it's probably not worth it at the moment
-        256
-    } else {
-        B::BITS / 2
-    };
+impl<B: FixedStorageType> Storage<Dim2D> for StaticStorage2D<B> {
+    type StorageType = StaticStorage<Dim2D, B>;
+    type Bits = B;
 
-    fn _get_cell_at_level_or_none(&self, level: usize) -> Option<Quadrant> {
-        if level >= self.depth.into() {
-            None
-        } else {
-            // Is safe because of level check above
-            unsafe { Some(self.get_cell_at_level_unchecked(level)) }
-        }
+    fn bits(&self) -> &Self::Bits {
+        &self.bits
+    }
+
+    fn bits_mut(&mut self) -> &mut Self::Bits {
+        &mut self.bits
+    }
+
+    fn depth(&self) -> usize {
+        self.depth as usize
     }
 }
 
@@ -515,34 +514,9 @@ impl<B: FixedStorageType> PartialEq for StaticStorage2D<B> {
 
 impl<B: FixedStorageType> Eq for StaticStorage2D<B> {}
 
-impl<B: FixedStorageType> Storage<Dim2D> for StaticStorage2D<B> {
-    fn max_depth() -> Option<usize> {
-        Some(Self::MAX_LEVELS)
-    }
-
-    fn depth(&self) -> usize {
-        self.depth.into()
-    }
-
-    unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant {
-        let start_bit = B::BITS - ((level + 1) * 2);
-        let end_bit = start_bit + 2;
-        let bits = self.bits.get_bits(start_bit..end_bit).as_u8() as usize;
-        Quadrant::try_from(bits).unwrap()
-    }
-
-    unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant) {
-        let cell_index: usize = cell.into();
-        let start_bit = B::BITS - ((level + 1) * 2);
-        let end_bit = start_bit + 2;
-        self.bits
-            .set_bits(start_bit..end_bit, B::from_u8(cell_index as u8));
-    }
-}
-
 impl<B: FixedStorageType> VariableDepthStorage<Dim2D> for StaticStorage2D<B> {
     fn child(&self, quadrant: Quadrant) -> Option<Self> {
-        if self.depth() == StaticStorage2D::<B>::MAX_LEVELS {
+        if self.depth() == <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return None;
         }
 
@@ -575,9 +549,9 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Quadrant]> for StaticStorage2D<B> {
     type Error = crate::Error;
 
     fn try_from(quadrants: &'a [Quadrant]) -> Result<Self, Self::Error> {
-        if quadrants.len() > Self::MAX_LEVELS {
+        if quadrants.len() > <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return Err(crate::Error::DepthLimitedExceeded {
-                max_depth: Self::MAX_LEVELS,
+                max_depth: <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS,
             });
         }
         let mut ret: Self = Default::default();
@@ -657,27 +631,19 @@ impl Ord for DynamicStorage2D {
 }
 
 impl Storage<Dim2D> for DynamicStorage2D {
-    fn max_depth() -> Option<usize> {
-        None
+    type StorageType = DynamicStorage<Dim2D>;
+    type Bits = Vec<u8>;
+
+    fn bits(&self) -> &Self::Bits {
+        &self.bits
+    }
+
+    fn bits_mut(&mut self) -> &mut Self::Bits {
+        &mut self.bits
     }
 
     fn depth(&self) -> usize {
         self.depth
-    }
-
-    unsafe fn get_cell_at_level_unchecked(&self, level: usize) -> Quadrant {
-        let byte_index = level / 4;
-        let start_bit = 8 - ((level % 4) + 1) * 2;
-        let end_bit = start_bit + 2;
-        let quadrant_index = self.bits[byte_index].get_bits(start_bit..end_bit) as usize;
-        quadrant_index.try_into().unwrap()
-    }
-
-    unsafe fn set_cell_at_level_unchecked(&mut self, level: usize, cell: Quadrant) {
-        let byte_index = level / 4;
-        let start_bit = 8 - ((level % 4) + 1) * 2;
-        let end_bit = start_bit + 2;
-        self.bits[byte_index].set_bits(start_bit..end_bit, cell.index() as u8);
     }
 }
 
@@ -778,7 +744,7 @@ impl<B: FixedStorageType> From<MortonIndex2D<FixedDepthStorage2D<B>>>
         Self {
             storage: StaticStorage2D {
                 bits: fixed_index.storage.bits,
-                depth: StaticStorage2D::<B>::MAX_LEVELS as u8,
+                depth: StaticStorage::<Dim2D, B>::MAX_LEVELS as u8,
             },
         }
     }
@@ -796,7 +762,7 @@ impl<B: FixedStorageType> From<MortonIndex2D<FixedDepthStorage2D<B>>>
         Self {
             storage: DynamicStorage2D {
                 bits,
-                depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
+                depth: FixedDepthStorage::<Dim2D, B>::MAX_LEVELS,
             },
         }
     }
@@ -826,7 +792,7 @@ impl<B: FixedStorageType> From<MortonIndex2D<StaticStorage2D<B>>>
         Self {
             storage: DynamicStorage2D {
                 bits,
-                depth: StaticStorage2D::<B>::MAX_LEVELS,
+                depth: StaticStorage::<Dim2D, B>::MAX_LEVELS,
             },
         }
     }
@@ -841,9 +807,9 @@ impl<B: FixedStorageType> TryFrom<MortonIndex2D<DynamicStorage2D>>
     type Error = crate::Error;
 
     fn try_from(value: MortonIndex2D<DynamicStorage2D>) -> Result<Self, Self::Error> {
-        if value.depth() > FixedDepthStorage2D::<B>::MAX_LEVELS {
+        if value.depth() > FixedDepthStorage::<Dim2D, B>::MAX_LEVELS {
             Err(crate::Error::DepthLimitedExceeded {
-                max_depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
+                max_depth: FixedDepthStorage::<Dim2D, B>::MAX_LEVELS,
             })
         } else {
             // DynamicStorage2D stores its cells as BigEndian, FixedDepthStorage2D uses the native endianness of the current
@@ -868,9 +834,9 @@ impl<B: FixedStorageType> TryFrom<MortonIndex2D<DynamicStorage2D>>
     type Error = crate::Error;
 
     fn try_from(value: MortonIndex2D<DynamicStorage2D>) -> Result<Self, Self::Error> {
-        if value.depth() > FixedDepthStorage2D::<B>::MAX_LEVELS {
+        if value.depth() > FixedDepthStorage::<Dim2D, B>::MAX_LEVELS {
             Err(crate::Error::DepthLimitedExceeded {
-                max_depth: FixedDepthStorage2D::<B>::MAX_LEVELS,
+                max_depth: FixedDepthStorage::<Dim2D, B>::MAX_LEVELS,
             })
         } else {
             // TODO There might be a way to optimize this code by directly setting the bits of the StaticStorage2D, however

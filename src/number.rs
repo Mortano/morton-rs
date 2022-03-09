@@ -1,5 +1,9 @@
 use core::ops::Range;
 
+use num_traits::Unsigned;
+
+use crate::align::Alignable;
+
 macro_rules! impl_bits {
     () => {
         unsafe fn get_bits(&self, bit_range: Range<usize>) -> Self {
@@ -11,6 +15,9 @@ macro_rules! impl_bits {
             let mask = (!(0 as Self)).checked_shr(shift_right as u32).unwrap_or(0);
             (*self >> shift) & mask
         }
+        unsafe fn get_bits_as_usize(&self, bit_range: Range<usize>) -> usize {
+            self.get_bits(bit_range) as usize
+        }
         unsafe fn set_bits(&mut self, bit_range: Range<usize>, new_value: Self) {
             let shift = bit_range.start as Self;
             let shift_right = std::mem::size_of::<Self>() * 8 - bit_range.len() as usize;
@@ -18,24 +25,33 @@ macro_rules! impl_bits {
             let clear_mask = !(mask << shift);
             *self = (*self & clear_mask) | (new_value << shift)
         }
+        unsafe fn set_bits_from_usize(&mut self, bit_range: Range<usize>, new_value: usize) {
+            self.set_bits(bit_range, new_value as Self)
+        }
 
-        unsafe fn as_u8(&self) -> u8 {
-            *self as u8
+        unsafe fn as_u8(self) -> u8 {
+            self as u8
         }
-        unsafe fn as_u16(&self) -> u16 {
-            *self as u16
+        unsafe fn as_u16(self) -> u16 {
+            self as u16
         }
-        unsafe fn as_u32(&self) -> u32 {
-            *self as u32
+        unsafe fn as_u32(self) -> u32 {
+            self as u32
         }
-        unsafe fn as_u64(&self) -> u64 {
-            *self as u64
+        unsafe fn as_u64(self) -> u64 {
+            self as u64
         }
-        unsafe fn as_u128(&self) -> u128 {
-            *self as u128
+        unsafe fn as_u128(self) -> u128 {
+            self as u128
+        }
+        unsafe fn as_usize(self) -> usize {
+            self as usize
         }
         unsafe fn as_u8_slice(&self) -> &[u8] {
             bytemuck::bytes_of(self)
+        }
+        unsafe fn as_u8_slice_mut(&mut self) -> &mut [u8] {
+            bytemuck::bytes_of_mut(self)
         }
 
         unsafe fn from_u8(val: u8) -> Self {
@@ -53,6 +69,13 @@ macro_rules! impl_bits {
         unsafe fn from_u128(val: u128) -> Self {
             val as Self
         }
+        unsafe fn from_usize(val: usize) -> Self {
+            val as Self
+        }
+
+        fn size(&self) -> usize {
+            std::mem::size_of::<Self>()
+        }
     };
 }
 
@@ -61,31 +84,38 @@ pub enum Endianness {
     LittleEndian,
 }
 
-pub trait Bits: Sized {
+pub trait Bits {
     const BITS: usize;
 
     unsafe fn get_bits(&self, bit_range: Range<usize>) -> Self;
+    unsafe fn get_bits_as_usize(&self, bit_range: Range<usize>) -> usize;
     unsafe fn set_bits(&mut self, bit_range: Range<usize>, new_value: Self);
+    unsafe fn set_bits_from_usize(&mut self, bit_range: Range<usize>, new_value: usize);
 
     // We don't use From/Into because these aren't implemented for all combinations of unsigned numbers
     // Some of these conversions also aren't always well-defined (how to go from u64 to u8? Truncating? Shifting?), so
     // we provide our own unsafe variants for conversions
 
-    unsafe fn as_u8(&self) -> u8;
-    unsafe fn as_u16(&self) -> u16;
-    unsafe fn as_u32(&self) -> u32;
-    unsafe fn as_u64(&self) -> u64;
-    unsafe fn as_u128(&self) -> u128;
+    unsafe fn as_u8(self) -> u8;
+    unsafe fn as_u16(self) -> u16;
+    unsafe fn as_u32(self) -> u32;
+    unsafe fn as_u64(self) -> u64;
+    unsafe fn as_u128(self) -> u128;
+    unsafe fn as_usize(self) -> usize;
     unsafe fn as_u8_slice(&self) -> &[u8];
+    unsafe fn as_u8_slice_mut(&mut self) -> &mut [u8];
 
     unsafe fn from_u8(val: u8) -> Self;
     unsafe fn from_u16(val: u16) -> Self;
     unsafe fn from_u32(val: u32) -> Self;
     unsafe fn from_u64(val: u64) -> Self;
     unsafe fn from_u128(val: u128) -> Self;
+    unsafe fn from_usize(val: usize) -> Self;
     /// Converts a slice of bytes into this `Bits` value using the given `endianness`. Missing bytes are filled with
     /// zero values, excess bytes are ignored!
     unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self;
+
+    fn size(&self) -> usize;
 }
 
 impl Bits for u8 {
@@ -234,6 +264,189 @@ impl Bits for usize {
     }
 }
 
+unsafe fn set_vec_u8_bits(vec: &mut Vec<u8>, bit_range: Range<usize>, new_value: &[u8]) {
+    // Iterate over self in 8-bit chunks and set the appropriate stuff from new_value
+    // This might require that we combine two u8 values into one
+
+    let self_start_byte = bit_range.start / 8;
+    let self_end_byte = (bit_range.end + 7) / 8;
+
+    let mut self_start_bit = bit_range.start;
+    let mut new_val_start_bit: usize = 0;
+
+    for self_byte_idx in self_start_byte..self_end_byte {
+        let self_end_bit = ((self_byte_idx + 1) * 8).min(bit_range.end);
+        let num_bits_in_chunk = self_end_bit - self_start_bit;
+        let new_val_end_bit = new_val_start_bit + num_bits_in_chunk;
+        let new_val_byte_idx = new_val_start_bit / 8;
+
+        // Get the u8 value to set into the current byte from new_value
+        // dst_start..dst_end either fits into the bounds of a single u8, or we have
+        // to combine 2 u8 values from new_value
+        let combined_byte = {
+            if new_val_byte_idx == new_value.len() - 1 {
+                let dst_start_in_byte = new_val_start_bit % 8;
+                let dst_end_in_byte = dst_start_in_byte + num_bits_in_chunk;
+
+                new_value[new_val_byte_idx].get_bits(dst_start_in_byte..dst_end_in_byte)
+            } else {
+                let ptr = new_value.as_ptr().add(new_val_byte_idx) as *const u16;
+                let two_bytes = ptr.read_unaligned();
+                let start_bit_in_two_bytes = new_val_start_bit - (new_val_byte_idx * 8);
+                let end_bit_in_two_bytes = new_val_end_bit - (new_val_byte_idx * 8);
+                two_bytes.get_bits(start_bit_in_two_bytes..end_bit_in_two_bytes) as u8
+            }
+        };
+        vec[self_byte_idx].set_bits(
+            (self_start_bit - (self_byte_idx * 8))..(self_end_bit - (self_byte_idx * 8)),
+            combined_byte,
+        );
+
+        self_start_bit = self_end_bit;
+        new_val_start_bit += num_bits_in_chunk;
+    }
+}
+
+impl Bits for Vec<u8> {
+    const BITS: usize = 0;
+
+    unsafe fn get_bits(&self, bit_range: Range<usize>) -> Self {
+        // Copy all relevant bytes, then shift each byte to the left and carry over bits from higher to lower bytes
+
+        let num_bits = bit_range.len();
+        let num_bytes = (num_bits + 7) / 8;
+        let start_byte = bit_range.start / 8;
+        let end_byte = (bit_range.end + 7) / 8;
+        let shift_within_byte = bit_range.start % 8;
+
+        let mut bytes = self[start_byte..end_byte].to_owned();
+        for idx in 0..bytes.len() {
+            if idx > 0 && shift_within_byte > 0 {
+                // Take the part of the byte that gets shifted 'out' of the current byte, and move it over to the
+                // previous byte
+                let carry = bytes[idx].get_bits(0..shift_within_byte);
+                bytes[idx - 1].set_bits((8 - shift_within_byte)..8, carry);
+            }
+            if idx == bytes.len() - 1 {
+                // Mask away the upper bits outside of the requested range on the last byte
+                let excess_bits = (end_byte * 8) - bit_range.end;
+                // There can never be overflow here, because excess_bits always will be less than 8!
+                let mask = 0xFF_u8 >> excess_bits;
+                bytes[idx] &= mask;
+            }
+            bytes[idx] >>= shift_within_byte;
+        }
+
+        // We might have to trim away the last byte if it has been shifted away completely
+        if (end_byte - start_byte) > num_bytes {
+            bytes.pop();
+        }
+
+        bytes
+    }
+
+    unsafe fn set_bits(&mut self, bit_range: Range<usize>, new_value: Self) {
+        set_vec_u8_bits(self, bit_range, new_value.as_slice());
+    }
+
+    unsafe fn as_u8(self) -> u8 {
+        self[0]
+    }
+
+    unsafe fn as_u16(self) -> u16 {
+        u16::from_ne_bytes(self.try_into().unwrap())
+    }
+
+    unsafe fn as_u32(self) -> u32 {
+        u32::from_ne_bytes(self.try_into().unwrap())
+    }
+
+    unsafe fn as_u64(self) -> u64 {
+        u64::from_ne_bytes(self.try_into().unwrap())
+    }
+
+    unsafe fn as_u128(self) -> u128 {
+        u128::from_ne_bytes(self.try_into().unwrap())
+    }
+
+    unsafe fn as_usize(self) -> usize {
+        usize::from_ne_bytes(self.try_into().unwrap())
+    }
+
+    unsafe fn as_u8_slice(&self) -> &[u8] {
+        self
+    }
+
+    unsafe fn as_u8_slice_mut(&mut self) -> &mut [u8] {
+        self
+    }
+
+    unsafe fn from_u8(val: u8) -> Self {
+        todo!()
+    }
+
+    unsafe fn from_u16(val: u16) -> Self {
+        todo!()
+    }
+
+    unsafe fn from_u32(val: u32) -> Self {
+        todo!()
+    }
+
+    unsafe fn from_u64(val: u64) -> Self {
+        todo!()
+    }
+
+    unsafe fn from_u128(val: u128) -> Self {
+        todo!()
+    }
+
+    unsafe fn from_usize(val: usize) -> Self {
+        todo!()
+    }
+
+    unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
+        todo!()
+    }
+
+    unsafe fn get_bits_as_usize(&self, bit_range: Range<usize>) -> usize {
+        let start_byte = bit_range.start / 8;
+        let end_byte = (bit_range.end + 7) / 8;
+        let mut current_start_bit = bit_range.start;
+        let mut usize_start_bit: usize = 0;
+
+        let mut ret: usize = 0;
+        let bytes = &self[start_byte..end_byte];
+        for idx in 0..bytes.len() {
+            let current_end_bit = ((idx + 1) * 8).min(bit_range.end);
+            let bits_within_current_byte = current_end_bit - current_start_bit;
+
+            let start_within_byte = current_start_bit % 8;
+            let end_within_byte = start_within_byte + bits_within_current_byte;
+
+            let byte = self[idx].get_bits(start_within_byte..end_within_byte);
+
+            // Put it at the right position in 'ret'
+            let usize_end_bit = usize_start_bit + bits_within_current_byte;
+            ret.set_bits(usize_start_bit..usize_end_bit, byte as usize);
+
+            current_start_bit = current_end_bit;
+            usize_start_bit += bits_within_current_byte;
+        }
+
+        ret
+    }
+
+    unsafe fn set_bits_from_usize(&mut self, bit_range: Range<usize>, new_value: usize) {
+        let bytes = bytemuck::bytes_of(&new_value);
+        set_vec_u8_bits(self, bit_range, bytes);
+    }
+
+    fn size(&self) -> usize {
+        self.len()
+    }
+}
+
 // TODO We could implement the following, but it is a bit more involved due to the get/set bits calls
 
 // impl <const N: usize> Bits for [u8; N] {
@@ -352,5 +565,160 @@ mod tests {
         assert_eq!(0b00000101 as u8, add_zero_before_every_bit_u8(0b0011 as u8));
         assert_eq!(0b01000001 as u8, add_zero_before_every_bit_u8(0b1001 as u8));
         assert_eq!(0b01000100 as u8, add_zero_before_every_bit_u8(0b1010 as u8));
+    }
+
+    #[test]
+    fn test_get_bits_vec_u8() {
+        // We expect reading to take place in the native endianness of the current machine
+        // On little endian, we have the MSB on the right (last byte of the vec)
+        // On big endian, we have the MSB on the left (first byte of the vec)
+        let vec: Vec<u8> = vec![0b1010_1010, 0b0110_1001, 0b0011_1010, 0b1110_1110];
+
+        #[cfg(target_endian = "little")]
+        const EXPECTED: u32 = 0b11101110_00111010_01101001_10101010;
+        #[cfg(target_endian = "big")]
+        const EXPECTED: u32 = 0b10101010_01101001_00111010_11101110;
+
+        unsafe {
+            // Base case of a single aligned byte
+            assert_eq!(vec![EXPECTED.get_bits(0..8) as u8], vec.get_bits(0..8));
+            // Less than a byte, but within one byte
+            assert_eq!(vec![EXPECTED.get_bits(2..6) as u8], vec.get_bits(2..6));
+
+            // Across more than one byte
+            #[cfg(target_endian = "little")]
+            assert_eq!(
+                vec![
+                    EXPECTED.get_bits(0..8) as u8,
+                    EXPECTED.get_bits(8..12) as u8
+                ],
+                vec.get_bits(0..12)
+            );
+            #[cfg(target_endian = "big")]
+            assert_eq!(
+                vec![
+                    EXPECTED.get_bits(8..12) as u8,
+                    EXPECTED.get_bits(0..8) as u8
+                ],
+                vec.get_bits(0..12)
+            );
+
+            // Across more than one byte, but resulting in only a single byte
+            assert_eq!(vec![EXPECTED.get_bits(4..12) as u8], vec.get_bits(4..12));
+
+            // Across more than one byte, multiple bytes
+            #[cfg(target_endian = "little")]
+            assert_eq!(
+                vec![
+                    EXPECTED.get_bits(12..20) as u8,
+                    EXPECTED.get_bits(20..28) as u8,
+                    EXPECTED.get_bits(28..32) as u8
+                ],
+                vec.get_bits(12..32)
+            );
+            #[cfg(target_endian = "big")]
+            assert_eq!(
+                vec![
+                    EXPECTED.get_bits(28..32) as u8,
+                    EXPECTED.get_bits(20..28) as u8,
+                    EXPECTED.get_bits(12..20) as u8
+                ],
+                vec.get_bits(12..32)
+            );
+
+            // Identity case of all bytes
+            assert_eq!(vec, vec.get_bits(0..32));
+        }
+    }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn set_bits_vec_u8() {
+        let mut vec: Vec<u8> = vec![0; 4];
+
+        unsafe {
+            vec.set_bits(0..8, vec![0b11000101]);
+            assert_eq!(vec![0b11000101, 0, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits(2..6, vec![0b1111]);
+            assert_eq!(vec![0b00111100, 0, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits(0..12, vec![0b11001010, 0b1001]);
+            assert_eq!(vec![0b11001010, 0b00001001, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits(4..16, vec![0b11001010, 0b1001]);
+            assert_eq!(vec![0b10100000, 0b10011100, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits(3..23, vec![0b11001010, 0b10010111, 0b1110]);
+            assert_eq!(vec![0b01010000, 0b10111110, 0b01110100, 0], vec);
+
+            vec = vec![0; 4];
+
+            let expected: Vec<u8> = vec![0b1010_1010, 0b0110_1001, 0b0011_1010, 0b1110_1110];
+            vec.set_bits(0..32, expected.clone());
+            assert_eq!(expected, vec);
+        }
+    }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn get_bits_as_usize_vec_u8() {
+        let vec: Vec<u8> = vec![0b1010_1010, 0b0110_1001, 0b0011_1010, 0b1110_1110];
+        const EXPECTED: usize = 0b11101110_00111010_01101001_10101010;
+
+        unsafe {
+            assert_eq!(EXPECTED.get_bits(0..8), vec.get_bits_as_usize(0..8));
+            assert_eq!(EXPECTED.get_bits(2..6), vec.get_bits_as_usize(2..6));
+            assert_eq!(EXPECTED.get_bits(0..12), vec.get_bits_as_usize(0..12));
+            assert_eq!(EXPECTED.get_bits(1..13), vec.get_bits_as_usize(1..13));
+            assert_eq!(EXPECTED.get_bits(4..24), vec.get_bits_as_usize(4..24));
+            assert_eq!(EXPECTED.get_bits(3..23), vec.get_bits_as_usize(3..23));
+            assert_eq!(EXPECTED.get_bits(0..32), vec.get_bits_as_usize(0..32));
+        }
+    }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn set_bits_from_usize_vec_u8() {
+        let mut vec: Vec<u8> = vec![0; 4];
+
+        unsafe {
+            vec.set_bits_from_usize(0..8, 0b11000101);
+            assert_eq!(vec![0b11000101, 0, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits_from_usize(2..6, 0b1111);
+            assert_eq!(vec![0b00111100, 0, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits_from_usize(0..12, 0b1001_11001010);
+            assert_eq!(vec![0b11001010, 0b00001001, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits_from_usize(4..16, 0b1001_11001010);
+            assert_eq!(vec![0b10100000, 0b10011100, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits_from_usize(3..23, 0b1110_10010111_11001010);
+            assert_eq!(vec![0b01010000, 0b10111110, 0b01110100, 0], vec);
+
+            vec = vec![0; 4];
+
+            let expected: Vec<u8> = vec![0b1010_1010, 0b0110_1001, 0b0011_1010, 0b1110_1110];
+            vec.set_bits_from_usize(0..32, 0b11101110_00111010_01101001_10101010);
+            assert_eq!(expected, vec);
+        }
     }
 }

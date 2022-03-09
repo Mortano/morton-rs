@@ -11,6 +11,8 @@ impl Dimension for Dim2D {
     //requires generic associated types, which are unstable :(
     type GridIndex = Vector2<usize>;
     type CellOrdering = QuadrantOrdering;
+
+    const DIMENSIONALITY: usize = 2;
 }
 
 /// Ordering of quadrants in 2D space

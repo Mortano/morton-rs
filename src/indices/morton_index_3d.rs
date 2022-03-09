@@ -6,7 +6,7 @@ use nalgebra::Vector3;
 
 use crate::{
     dimensions::{Dim3D, Octant, OctantOrdering},
-    FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, Storage,
+    FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, Storage, StorageType,
     VariableDepthStorage,
 };
 
@@ -136,18 +136,19 @@ pub struct FixedDepthStorage3D<B: FixedStorageType> {
     bits: B,
 }
 
-impl<B: FixedStorageType> FixedDepthStorage for FixedDepthStorage3D<B> {
-    type Dimension = Dim3D;
-    type BitType = B;
+impl<B: FixedStorageType> Storage<Dim3D> for FixedDepthStorage3D<B> {
+    type StorageType = FixedDepthStorage<Dim3D, B>;
+    type Bits = B;
 
-    const MAX_LEVELS: usize = B::BITS / 3;
-    const DIMENSIONALITY: usize = 3;
-
-    fn bits(&self) -> &Self::BitType {
+    fn bits(&self) -> &Self::Bits {
         &self.bits
     }
 
-    fn bits_mut(&mut self) -> &mut Self::BitType {
+    fn bits_mut(&mut self) -> &mut Self::Bits {
         &mut self.bits
+    }
+
+    fn depth(&self) -> usize {
+        FixedDepthStorage::<Dim3D, B>::MAX_LEVELS
     }
 }

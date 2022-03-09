@@ -1,4 +1,3 @@
-
 mod morton;
 pub use self::morton::*;
 
@@ -8,5 +7,6 @@ pub use self::indices::*;
 mod error;
 pub use self::error::*;
 
-pub mod number;
+pub mod align;
 pub mod dimensions;
+pub mod number;

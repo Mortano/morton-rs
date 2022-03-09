@@ -26,4 +26,6 @@ pub trait Dimension {
     /// With ordering `XY`, `Quadrant1` would have the index `(1,0)`, with ordering `YZ` it would have index `(0,1)`. This extends
     /// to all higher dimensions, but the number of different orderings increases (in general it is `N!` for N-dimensional space)
     type CellOrdering: Default;
+    /// The number of dimensions that this `Dimension` describes
+    const DIMENSIONALITY: usize;
 }

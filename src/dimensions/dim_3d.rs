@@ -9,6 +9,8 @@ impl Dimension for Dim3D {
     type Cell = Octant;
     type GridIndex = Vector3<usize>;
     type CellOrdering = OctantOrdering;
+
+    const DIMENSIONALITY: usize = 3;
 }
 
 /// Ordering of octants in 3D space
