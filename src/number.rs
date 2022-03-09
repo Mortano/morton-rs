@@ -1,9 +1,5 @@
 use core::ops::Range;
 
-use num_traits::Unsigned;
-
-use crate::align::Alignable;
-
 macro_rules! impl_bits {
     () => {
         unsafe fn get_bits(&self, bit_range: Range<usize>) -> Self {
@@ -79,6 +75,7 @@ macro_rules! impl_bits {
     };
 }
 
+#[derive(PartialEq, Eq)]
 pub enum Endianness {
     BigEndian,
     LittleEndian,
@@ -382,31 +379,39 @@ impl Bits for Vec<u8> {
     }
 
     unsafe fn from_u8(val: u8) -> Self {
-        todo!()
+        bytemuck::bytes_of(&val).to_owned()
     }
 
     unsafe fn from_u16(val: u16) -> Self {
-        todo!()
+        bytemuck::bytes_of(&val).to_owned()
     }
 
     unsafe fn from_u32(val: u32) -> Self {
-        todo!()
+        bytemuck::bytes_of(&val).to_owned()
     }
 
     unsafe fn from_u64(val: u64) -> Self {
-        todo!()
+        bytemuck::bytes_of(&val).to_owned()
     }
 
     unsafe fn from_u128(val: u128) -> Self {
-        todo!()
+        bytemuck::bytes_of(&val).to_owned()
     }
 
     unsafe fn from_usize(val: usize) -> Self {
-        todo!()
+        bytemuck::bytes_of(&val).to_owned()
     }
 
     unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
-        todo!()
+        #[cfg(target_endian = "little")]
+        const PLATFORM_ENDIANNESS: Endianness = Endianness::LittleEndian;
+        #[cfg(target_endian = "big")]
+        const PLATFORM_ENDIANNESS: Endianness = Endianness::BigEndian;
+
+        match endianness {
+            PLATFORM_ENDIANNESS => bytes.to_owned(),
+            _ => bytes.iter().copied().rev().collect(),
+        }
     }
 
     unsafe fn get_bits_as_usize(&self, bit_range: Range<usize>) -> usize {
@@ -473,6 +478,26 @@ pub fn add_zero_before_every_bit_u8(val: u8) -> u8 {
     ret = (ret | (ret << 2)) & 0b00110011;
     ret = (ret | (ret << 1)) & 0b01010101;
     ret
+}
+
+/// Take the lower 8 bits of `val` and adds a zero before every bit. This is the `u16` version of
+/// `add_zero_before_every_bit_u8`
+pub fn add_zero_before_every_bit_u16(val: u16) -> u16 {
+    let mut ret = val;
+    ret = (ret | (ret << 4)) & 0b00001111_00001111;
+    ret = (ret | (ret << 2)) & 0b00110011_00110011;
+    ret = (ret | (ret << 1)) & 0b01010101_01010101;
+    ret
+}
+
+/// Adds two zero bits before every bit in `val`. So for example `0b01101101` becomes
+/// `0b000_001_001_000_001_001_000_001`, or (grouped differently) `0b00000100_10000010_01000001`
+pub fn add_two_zeroes_before_every_bit_u8(val: u8) -> u32 {
+    let mut val = val as u32;
+    val = (val | (val << 8)) & 0x0F00F00F;
+    val = (val | (val << 4)) & 0xC30C30C3;
+    val = (val | (val << 2)) & 0x49249249;
+    val
 }
 
 #[cfg(test)]
@@ -564,6 +589,34 @@ mod tests {
         assert_eq!(0b00000101 as u8, add_zero_before_every_bit_u8(0b0011 as u8));
         assert_eq!(0b01000001 as u8, add_zero_before_every_bit_u8(0b1001 as u8));
         assert_eq!(0b01000100 as u8, add_zero_before_every_bit_u8(0b1010 as u8));
+    }
+
+    #[test]
+    fn test_add_two_zeroes_before_every_bit_u8() {
+        assert_eq!(0b1_u32, add_two_zeroes_before_every_bit_u8(0b1));
+        assert_eq!(0b1001_u32, add_two_zeroes_before_every_bit_u8(0b11));
+        assert_eq!(0b1000_u32, add_two_zeroes_before_every_bit_u8(0b10));
+        assert_eq!(0b1001001_u32, add_two_zeroes_before_every_bit_u8(0b111));
+        assert_eq!(
+            0b10_01001001_u32,
+            add_two_zeroes_before_every_bit_u8(0b1111)
+        );
+        assert_eq!(
+            0b10010_01001001_u32,
+            add_two_zeroes_before_every_bit_u8(0b11111)
+        );
+        assert_eq!(
+            0b10010010_01001001_u32,
+            add_two_zeroes_before_every_bit_u8(0b111111)
+        );
+        assert_eq!(
+            0b100_10010010_01001001_u32,
+            add_two_zeroes_before_every_bit_u8(0b1111111)
+        );
+        assert_eq!(
+            0b100100_10010010_01001001_u32,
+            add_two_zeroes_before_every_bit_u8(0b11111111)
+        );
     }
 
     #[test]

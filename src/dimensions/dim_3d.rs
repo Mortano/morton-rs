@@ -72,6 +72,17 @@ impl OctantOrdering {
             ),
         }
     }
+
+    pub fn get_bit_shifts_for_xyz(&self) -> (usize, usize, usize) {
+        match self {
+            OctantOrdering::XYZ => (0, 1, 2),
+            OctantOrdering::XZY => (0, 2, 1),
+            OctantOrdering::YXZ => (1, 0, 2),
+            OctantOrdering::YZX => (2, 0, 1),
+            OctantOrdering::ZXY => (1, 2, 0),
+            OctantOrdering::ZYX => (2, 1, 0),
+        }
+    }
 }
 
 impl Default for OctantOrdering {
@@ -143,17 +154,6 @@ impl TryFrom<usize> for Octant {
 mod tests {
     use super::*;
 
-    fn get_bit_shifts_for_xyz(octant_ordering: OctantOrdering) -> (usize, usize, usize) {
-        match octant_ordering {
-            OctantOrdering::XYZ => (0, 1, 2),
-            OctantOrdering::XZY => (0, 2, 1),
-            OctantOrdering::YXZ => (1, 0, 2),
-            OctantOrdering::YZX => (2, 0, 1),
-            OctantOrdering::ZXY => (1, 2, 0),
-            OctantOrdering::ZYX => (2, 1, 0),
-        }
-    }
-
     #[test]
     fn octant_orderings() {
         // This tests all octants with all possible octant orderings, procedurally
@@ -165,7 +165,7 @@ mod tests {
             OctantOrdering::ZXY,
             OctantOrdering::ZYX,
         ] {
-            let (x_sh, y_sh, z_sh) = get_bit_shifts_for_xyz(ordering);
+            let (x_sh, y_sh, z_sh) = ordering.get_bit_shifts_for_xyz();
             for octant_index in 0..8 {
                 let octant = Octant::try_from(octant_index).unwrap();
                 let expected_vec = Vector3::new(
