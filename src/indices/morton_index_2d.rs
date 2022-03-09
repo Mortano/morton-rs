@@ -292,6 +292,7 @@ impl MortonIndex2D<DynamicStorage2D> {
                         }
                         bits
                     })
+                    .rev()
                     .collect(),
                 depth: grid_depth,
             },
@@ -652,12 +653,7 @@ impl VariableDepthStorage<Dim2D> for DynamicStorage2D {
         match self.depth {
             0 => None,
             depth if depth % 4 == 1 => Some(Self {
-                bits: self
-                    .bits
-                    .iter()
-                    .copied()
-                    .take(self.bits.len() - 1)
-                    .collect(),
+                bits: self.bits.iter().copied().skip(1).collect(),
                 depth: self.depth - 1,
             }),
             _ => {
@@ -675,7 +671,7 @@ impl VariableDepthStorage<Dim2D> for DynamicStorage2D {
         match self.depth {
             depth if depth % 4 == 0 => {
                 let mut ret = self.clone();
-                ret.bits.push((quadrant.index() as u8) << 6);
+                ret.bits.insert(0, (quadrant.index() as u8) << 6);
                 ret.depth += 1;
                 Some(ret)
             }
@@ -695,24 +691,17 @@ impl<'a> TryFrom<&'a [Quadrant]> for DynamicStorage2D {
     type Error = crate::Error;
 
     fn try_from(quadrants: &'a [Quadrant]) -> Result<Self, Self::Error> {
-        // Chunk into groups of 4 and combine those into u8 values
-        let bits = quadrants
-            .chunks(4)
-            .map(|chunk| {
-                chunk
-                    .iter()
-                    .enumerate()
-                    .fold(0_u8, |accum, (idx, quadrant)| {
-                        let quadrant_index: usize = quadrant.into();
-                        // Store bits as little endian
-                        accum | ((quadrant_index as u8) << (6 - (2 * idx)))
-                    })
-            })
-            .collect::<Vec<_>>();
-        Ok(Self {
-            bits,
+        let num_bytes = (quadrants.len() + 3) / 4;
+        let mut storage = Self {
+            bits: vec![0; num_bytes],
             depth: quadrants.len(),
-        })
+        };
+        for (level, quadrant) in quadrants.iter().enumerate() {
+            unsafe {
+                storage.set_cell_at_level_unchecked(level, *quadrant);
+            }
+        }
+        Ok(storage)
     }
 }
 
@@ -756,9 +745,9 @@ impl<B: FixedStorageType> From<MortonIndex2D<FixedDepthStorage2D<B>>>
     fn from(fixed_index: MortonIndex2D<FixedDepthStorage2D<B>>) -> Self {
         let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
         #[cfg(target_endian = "little")]
-        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
-        #[cfg(target_endian = "big")]
         let bits = native_bits.to_owned();
+        #[cfg(target_endian = "big")]
+        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
         Self {
             storage: DynamicStorage2D {
                 bits,
@@ -786,9 +775,9 @@ impl<B: FixedStorageType> From<MortonIndex2D<StaticStorage2D<B>>>
     fn from(fixed_index: MortonIndex2D<StaticStorage2D<B>>) -> Self {
         let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
         #[cfg(target_endian = "little")]
-        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
-        #[cfg(target_endian = "big")]
         let bits = native_bits.to_owned();
+        #[cfg(target_endian = "big")]
+        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
         Self {
             storage: DynamicStorage2D {
                 bits,
@@ -815,9 +804,9 @@ impl<B: FixedStorageType> TryFrom<MortonIndex2D<DynamicStorage2D>>
             // DynamicStorage2D stores its cells as BigEndian, FixedDepthStorage2D uses the native endianness of the current
             // machine
             #[cfg(target_endian = "little")]
-            let endianness = Endianness::BigEndian;
-            #[cfg(target_endian = "big")]
             let endianness = Endianness::LittleEndian;
+            #[cfg(target_endian = "big")]
+            let endianness = Endianness::BigEndian;
             let bytes = value.storage.bits.as_slice();
             Ok(Self {
                 storage: FixedDepthStorage2D {

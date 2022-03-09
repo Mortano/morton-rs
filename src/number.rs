@@ -416,8 +416,7 @@ impl Bits for Vec<u8> {
         let mut usize_start_bit: usize = 0;
 
         let mut ret: usize = 0;
-        let bytes = &self[start_byte..end_byte];
-        for idx in 0..bytes.len() {
+        for idx in start_byte..end_byte {
             let current_end_bit = ((idx + 1) * 8).min(bit_range.end);
             let bits_within_current_byte = current_end_bit - current_start_bit;
 
@@ -647,6 +646,11 @@ mod tests {
 
             vec = vec![0; 4];
 
+            vec.set_bits(20..24, vec![0b1111]);
+            assert_eq!(vec![0, 0, 0b11110000, 0], vec);
+
+            vec = vec![0; 4];
+
             vec.set_bits(0..12, vec![0b11001010, 0b1001]);
             assert_eq!(vec![0b11001010, 0b00001001, 0, 0], vec);
 
@@ -677,6 +681,7 @@ mod tests {
         unsafe {
             assert_eq!(EXPECTED.get_bits(0..8), vec.get_bits_as_usize(0..8));
             assert_eq!(EXPECTED.get_bits(2..6), vec.get_bits_as_usize(2..6));
+            assert_eq!(EXPECTED.get_bits(20..24), vec.get_bits_as_usize(20..24));
             assert_eq!(EXPECTED.get_bits(0..12), vec.get_bits_as_usize(0..12));
             assert_eq!(EXPECTED.get_bits(1..13), vec.get_bits_as_usize(1..13));
             assert_eq!(EXPECTED.get_bits(4..24), vec.get_bits_as_usize(4..24));
@@ -698,6 +703,11 @@ mod tests {
 
             vec.set_bits_from_usize(2..6, 0b1111);
             assert_eq!(vec![0b00111100, 0, 0, 0], vec);
+
+            vec = vec![0; 4];
+
+            vec.set_bits_from_usize(20..24, 0b1111);
+            assert_eq!(vec![0, 0, 0b11110000, 0], vec);
 
             vec = vec![0; 4];
 
