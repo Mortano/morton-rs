@@ -10,7 +10,7 @@ use crate::{
     dimensions::{Dim3D, Dimension, Octant, OctantOrdering},
     number::{add_two_zeroes_before_every_bit_u8, Bits},
     CellIter, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, StaticStorage,
-    Storage, StorageType, VariableDepthStorage,
+    StaticStorage2D, Storage, StorageType, VariableDepthStorage,
 };
 
 pub type FixedDepthMortonIndex3D8 = MortonIndex3D<FixedDepthStorage3D<u8>>;
@@ -18,6 +18,12 @@ pub type FixedDepthMortonIndex3D16 = MortonIndex3D<FixedDepthStorage3D<u16>>;
 pub type FixedDepthMortonIndex3D32 = MortonIndex3D<FixedDepthStorage3D<u32>>;
 pub type FixedDepthMortonIndex3D64 = MortonIndex3D<FixedDepthStorage3D<u64>>;
 pub type FixedDepthMortonIndex3D128 = MortonIndex3D<FixedDepthStorage3D<u128>>;
+
+pub type StaticMortonIndex3D8 = MortonIndex3D<StaticStorage3D<u8>>;
+pub type StaticMortonIndex3D16 = MortonIndex3D<StaticStorage3D<u16>>;
+pub type StaticMortonIndex3D32 = MortonIndex3D<StaticStorage3D<u32>>;
+pub type StaticMortonIndex3D64 = MortonIndex3D<StaticStorage3D<u64>>;
+pub type StaticMortonIndex3D128 = MortonIndex3D<StaticStorage3D<u128>>;
 
 /// A §D Morton index. This represents a single node inside an octree. The depth of the node and the maximum storage
 /// capacity of this type depend on the generic `Storage` type
@@ -196,6 +202,118 @@ impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
     }
 }
 
+impl<B: FixedStorageType> MortonIndex3D<StaticStorage3D<B>> {
+    /// Returns a MortonIndex3D with static storage with the given `depth` where all cells are zeroed (i.e. representing `Octant::Zero`). If
+    /// the `depth` is larger than the maximum depth of the `StaticStorage3D<B>`, `None` is returned
+    pub fn zeroed(depth: u8) -> Option<Self> {
+        if depth as usize > <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+            return None;
+        }
+        Some(Self {
+            storage: StaticStorage3D::<B> {
+                bits: Default::default(),
+                depth,
+            },
+        })
+    }
+
+    /// Creates a new MortonIndex3D with static storage from the given 3D grid index. The `grid_depth` parameter
+    /// describes the 'depth' of the grid as per the equation: `N = 2 ^ grid_depth`, where `N` is the number of cells
+    /// per axis in the grid. For example, a `32*32*32` grid has a `grid_depth` of `log2(32) = 5`. If `3 * grid_depth`
+    /// exceeds the capacity of the static storage type `B`, this returns an error.
+    pub fn from_grid_index(
+        grid_index: <Dim3D as Dimension>::GridIndex,
+        grid_depth: usize,
+        ordering: OctantOrdering,
+    ) -> Result<Self, crate::Error> {
+        if grid_depth > <FixedDepthStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: <FixedDepthStorage<Dim3D, B> as StorageType>::MAX_LEVELS,
+            });
+        }
+
+        // Since we always start at the MSB for level 0, but grid indices have different numbers of bits depending
+        // on the `grid_depth`, we shift the x, y, and z parts of the `grid_index` so that they match the maximum depth
+        // Example:
+        // Suppose we have a `u8` storage for a StaticMortonIndex3D. Then, the bits (in default XYZ octant order) look like this:
+        //   Bit index:   7  6  5  4  3  2  1  0
+        //               z1 y1 x1 z2 y2 x2  0  0
+        // The first octant, defined by (x1, y1, z1) sits in the most-significant bits. This is true regardless of the depth of the
+        // Morton index, so for an index with depth 1, the bits look like this:
+        //   Bit index:   7  6  5  4  3  2  1  0
+        //               z1 y1 x1  0  0  0  0  0
+        //
+        // Now look at the grid indices that correspond to these Morton indices! In the first case, the grid index looks like this:
+        //   Bit index:   7  6  5  4  3  2  1  0
+        //           X:   0  0  0  0  0  0 x1 x2
+        //           Y:   0  0  0  0  0  0 y1 y2
+        //           Z:   0  0  0  0  0  0 z1 z2
+        //
+        // In the second case, this is the grid index:
+        //   Bit index:   7  6  5  4  3  2  1  0
+        //           X:   0  0  0  0  0  0  0 x1
+        //           Y:   0  0  0  0  0  0  0 y1
+        //           Z:   0  0  0  0  0  0  0 z1
+        //
+        // So for depth=2, the `x1` bit has index 1, whereas for depth=1, the `x1` bit has index 0. This might look weird, but this is
+        // how numbers work, and a grid index is nothing but a number that identifies a cell position in X, Y, Z. In order to rectify this,
+        // we thus have to shift the bits of the grid indices that have a depth less than the MAX_LEVELS up, so that we get this:
+        //   Bit index:   7  6  5  4  3  2  1  0
+        //           X:   0  0  0  0  0  0 x1  0
+        //           Y:   0  0  0  0  0  0 y1  0
+        //           Z:   0  0  0  0  0  0 z1  0
+        //
+        // We then start setting bits from the grid index bits over to the Morton index from the most-significant bit down, which is why
+        // we have this rev() call in the for-loop!
+
+        let shift_to_max_bits =
+            <FixedDepthStorage<Dim3D, B> as StorageType>::MAX_LEVELS - grid_depth;
+        let x_bits = unsafe { grid_index.x.get_bits(0..grid_depth) << shift_to_max_bits };
+        let y_bits = unsafe { grid_index.y.get_bits(0..grid_depth) << shift_to_max_bits };
+        let z_bits = unsafe { grid_index.z.get_bits(0..grid_depth) << shift_to_max_bits };
+
+        let (x_shift, y_shift, z_shift) = ordering.get_bit_shifts_for_xyz();
+
+        let mut bits = B::default();
+        // Data is stored starting at the MSB, so there might be some leftover (i.e. unused) bits at the end
+        // We have to take this into consideration when we set the bits!
+        let leftover_bits_at_end: usize = B::BITS % Dim3D::DIMENSIONALITY;
+        // As opposed to the 2D case, in the 3D case we can't simply process 8-bit chunks at a time, because
+        // a single cell takes 3 bits and thus doesn't evenly divide 8. So instead we read one byte at a time
+        // from the grid index and set 24 bits at a time in the Morton index
+        // We also start setting the bits from the most significant chunk towards the least significant chunk!
+        // This way, we make sure that we set the high bits first in cases where the grid_depth is smaller than
+        // the MAX_LEVELS
+        let num_chunks = (grid_depth + 7) / 8;
+        let max_chunks = (<FixedDepthStorage<Dim3D, B> as StorageType>::MAX_LEVELS + 7) / 8;
+        let chunk_start = max_chunks - num_chunks;
+        for chunk_index in (chunk_start..max_chunks).rev() {
+            let start_bit = chunk_index * 8;
+            let end_bit = start_bit + 8;
+            let x_chunk = unsafe { x_bits.get_bits(start_bit..end_bit) as u8 };
+            let y_chunk = unsafe { y_bits.get_bits(start_bit..end_bit) as u8 };
+            let z_chunk = unsafe { z_bits.get_bits(start_bit..end_bit) as u8 };
+            let chunk = (add_two_zeroes_before_every_bit_u8(x_chunk) << x_shift)
+                | (add_two_zeroes_before_every_bit_u8(y_chunk) << y_shift)
+                | (add_two_zeroes_before_every_bit_u8(z_chunk) << z_shift);
+
+            // chunk contains 24 valid bits at most
+            let start_bit = (chunk_index * 24) + leftover_bits_at_end;
+            let end_bit = (start_bit + 24).min(B::BITS);
+            unsafe {
+                bits.set_bits(start_bit..end_bit, B::from_u32(chunk));
+            }
+        }
+
+        Ok(Self {
+            storage: StaticStorage3D {
+                bits,
+                depth: grid_depth as u8,
+            },
+        })
+    }
+}
+
 // Storage types:
 
 /// Storage for a 3D Morton index that always stores a Morton index with a fixed depth (fixed number of levels)
@@ -276,6 +394,37 @@ impl<B: FixedStorageType> Storage<Dim3D> for StaticStorage3D<B> {
     }
 }
 
+impl<B: FixedStorageType> VariableDepthStorage<Dim3D> for StaticStorage3D<B> {
+    fn parent(&self) -> Option<Self> {
+        if self.depth() == 0 {
+            return None;
+        }
+
+        let mut ret = *self;
+        // Zero out the lowest octant to make sure that the new value does not have bits set at a higher position than
+        // what depth() indicates!
+        unsafe {
+            ret.set_cell_at_level_unchecked(self.depth() - 1, Octant::Zero);
+        }
+        ret.depth -= 1;
+        Some(ret)
+    }
+
+    fn child(&self, cell: <Dim3D as Dimension>::Cell) -> Option<Self> {
+        if self.depth() == <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+            return None;
+        }
+
+        let mut ret = *self;
+        // Safe because of depth check above
+        unsafe {
+            ret.set_cell_at_level_unchecked(self.depth(), cell);
+        }
+        ret.depth += 1;
+        Some(ret)
+    }
+}
+
 impl<B: FixedStorageType> PartialOrd for StaticStorage3D<B> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -327,6 +476,39 @@ impl<B: FixedStorageType> PartialEq for StaticStorage3D<B> {
 }
 
 impl<B: FixedStorageType> Eq for StaticStorage3D<B> {}
+
+impl<'a, B: FixedStorageType> TryFrom<&'a [Octant]> for StaticStorage3D<B> {
+    type Error = crate::Error;
+
+    fn try_from(octants: &'a [Octant]) -> Result<Self, Self::Error> {
+        if octants.len() > <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS,
+            });
+        }
+        let mut ret: Self = Default::default();
+        for (level, cell) in octants.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level, *cell);
+            }
+        }
+        ret.depth = octants.len() as u8;
+        Ok(ret)
+    }
+}
+
+impl<'a, B: FixedStorageType> IntoIterator for &'a StaticStorage3D<B> {
+    type Item = Octant;
+    type IntoIter = CellIter<'a, Dim3D, StaticStorage3D<B>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        CellIter {
+            index: 0,
+            storage: self,
+            _phantom: Default::default(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -482,6 +664,227 @@ mod tests {
         };
     }
 
+    macro_rules! test_static {
+        ($typename:ident, $modname:ident, $max_levels:literal) => {
+            mod $modname {
+                use super::*;
+
+                const MAX_LEVELS: usize = $max_levels;
+
+                #[test]
+                fn default() {
+                    let idx = $typename::default();
+                    assert_eq!(0, idx.depth());
+                }
+
+                #[test]
+                fn from_octants() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(octants.len(), idx.depth());
+                    for (level, expected_octant) in octants.iter().enumerate() {
+                        assert_eq!(*expected_octant, idx.get_cell_at_level(level));
+                    }
+                }
+
+                #[test]
+                fn from_too_many_octants_fails() {
+                    let octants = get_test_octants(MAX_LEVELS + 1);
+                    let res = $typename::try_from(octants.as_slice());
+                    assert!(res.is_err());
+                }
+
+                #[test]
+                fn from_fewer_octants_than_max_depth() {
+                    let octants = get_test_octants(MAX_LEVELS - 2);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(MAX_LEVELS - 2, idx.depth());
+                    for (level, expected_octant) in octants.iter().enumerate() {
+                        assert_eq!(*expected_octant, idx.get_cell_at_level(level));
+                    }
+                }
+
+                #[test]
+                fn from_just_one_octant() {
+                    let octants = vec![Octant::Seven];
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(1, idx.depth());
+                    assert_eq!(Octant::Seven, idx.get_cell_at_level(0));
+                }
+
+                #[test]
+                fn set_cell() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let mut idx = $typename::zeroed(MAX_LEVELS as u8).unwrap();
+                    for level in 0..MAX_LEVELS {
+                        idx.set_cell_at_level(level, octants[level]);
+                    }
+
+                    for level in 0..MAX_LEVELS {
+                        assert_eq!(octants[level], idx.get_cell_at_level(level));
+                    }
+                }
+
+                #[test]
+                #[should_panic]
+                fn set_cell_oob_panics() {
+                    let mut idx = $typename::default();
+                    // Tests both that OOB panics AND that a default-constructed Morton index with static storage has initial
+                    // depth of zero
+                    idx.set_cell_at_level(0, Octant::One);
+                }
+
+                #[test]
+                fn cells_iter() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    let collected_octants = idx.cells().collect::<Vec<_>>();
+                    assert_eq!(octants.as_slice(), collected_octants.as_slice());
+                }
+
+                #[test]
+                fn child() {
+                    let idx = $typename::default();
+                    let child_idx = idx
+                        .child(Octant::Three)
+                        .expect("child() should not return None");
+                    assert_eq!(1, child_idx.depth());
+                    assert_eq!(Octant::Three, child_idx.get_cell_at_level(0));
+                }
+
+                #[test]
+                fn child_oob_yields_none() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(None, idx.child(Octant::Zero));
+                }
+
+                #[test]
+                fn parent() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let parent_octants = &octants[0..MAX_LEVELS - 1];
+                    let child = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    let expected_parent = $typename::try_from(parent_octants)
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(Some(expected_parent), child.parent());
+                }
+
+                #[test]
+                fn parent_of_root_yields_none() {
+                    let root = $typename::default();
+                    assert_eq!(None, root.parent());
+                }
+
+                #[test]
+                fn ordering() {
+                    let count = 128;
+                    let mut rng = thread_rng();
+                    let mut indices = (0..count)
+                        .map(|_| {
+                            let rnd_levels = rng.gen_range(0..MAX_LEVELS);
+                            let octants = get_test_octants(rnd_levels);
+                            $typename::try_from(octants.as_slice())
+                                .expect("Could not create Morton index from octants")
+                        })
+                        .collect::<Vec<_>>();
+
+                    indices.sort();
+
+                    // Indices have to be sorted in ascending order, meaning that for indices i and j with i < j,
+                    // each octant of index i must be <= the octant at the same level of index j, up until and including
+                    // the first octant of i that is less than j
+                    for idx in 0..(count - 1) {
+                        let i = indices[idx];
+                        let j = indices[idx + 1];
+                        for (cell_low, cell_high) in i.cells().zip(j.cells()) {
+                            if cell_low < cell_high {
+                                break;
+                            }
+                            assert!(
+                                cell_low <= cell_high,
+                                "Index {} is not <= index {}",
+                                i.to_string(MortonIndexNaming::CellConcatenation),
+                                j.to_string(MortonIndexNaming::CellConcatenation)
+                            );
+                        }
+                    }
+                }
+
+                #[test]
+                fn roundtrip_grid_index() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    for octant_ordering in [
+                        OctantOrdering::XYZ,
+                        OctantOrdering::XZY,
+                        OctantOrdering::YXZ,
+                        OctantOrdering::YZX,
+                        OctantOrdering::ZXY,
+                        OctantOrdering::ZYX,
+                    ] {
+                        let grid_index = idx.to_grid_index(octant_ordering);
+                        let rountrip_idx =
+                            $typename::from_grid_index(grid_index, MAX_LEVELS, octant_ordering)
+                                .expect("Can't get Morton index from grid index");
+                        assert_eq!(idx, rountrip_idx);
+                    }
+                }
+
+                #[test]
+                fn roundtrip_grid_index_with_odd_levels() {
+                    let octants = get_test_octants(MAX_LEVELS - 1);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    for octant_ordering in [
+                        OctantOrdering::XYZ,
+                        OctantOrdering::XZY,
+                        OctantOrdering::YXZ,
+                        OctantOrdering::YZX,
+                        OctantOrdering::ZXY,
+                        OctantOrdering::ZYX,
+                    ] {
+                        let grid_index = idx.to_grid_index(octant_ordering);
+                        let rountrip_idx =
+                            $typename::from_grid_index(grid_index, MAX_LEVELS - 1, octant_ordering)
+                                .expect("Can't get Morton index from grid index");
+                        assert_eq!(idx, rountrip_idx);
+                    }
+                }
+
+                #[test]
+                fn roundtrip_grid_index_with_one_level() {
+                    let octants = get_test_octants(1);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    for octant_ordering in [
+                        OctantOrdering::XYZ,
+                        OctantOrdering::XZY,
+                        OctantOrdering::YXZ,
+                        OctantOrdering::YZX,
+                        OctantOrdering::ZXY,
+                        OctantOrdering::ZYX,
+                    ] {
+                        let grid_index = idx.to_grid_index(octant_ordering);
+                        let rountrip_idx =
+                            $typename::from_grid_index(grid_index, 1, octant_ordering)
+                                .expect("Can't get Morton index from grid index");
+                        assert_eq!(idx, rountrip_idx);
+                    }
+                }
+            }
+        };
+    }
+
     //
     test_fixed_depth!(FixedDepthMortonIndex3D8, fixed_depth_morton_index_3d8, 2);
     test_fixed_depth!(FixedDepthMortonIndex3D16, fixed_depth_morton_index_3d16, 5);
@@ -492,4 +895,10 @@ mod tests {
         fixed_depth_morton_index_3d128,
         42
     );
+
+    test_static!(StaticMortonIndex3D8, static_morton_index_3d8, 2);
+    test_static!(StaticMortonIndex3D16, static_morton_index_3d16, 5);
+    test_static!(StaticMortonIndex3D32, static_morton_index_3d32, 10);
+    test_static!(StaticMortonIndex3D64, static_morton_index_3d64, 21);
+    test_static!(StaticMortonIndex3D128, static_morton_index_3d128, 42);
 }

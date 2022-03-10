@@ -158,8 +158,12 @@ impl<B: FixedStorageType> MortonIndex2D<StaticStorage2D<B>> {
         }
 
         // the grid_depth is equal to the number of valid bits in the X and Y fields of grid_index
-        let x_bits = unsafe { grid_index.x.get_bits(0..grid_depth) };
-        let y_bits = unsafe { grid_index.y.get_bits(0..grid_depth) };
+        // There is an explanation for the shifting in the corresponding implementation for the 3D case
+        // in `morton_index_3d.rs`
+        let shift_to_max_bits =
+            <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS - grid_depth;
+        let x_bits = unsafe { grid_index.x.get_bits(0..grid_depth) << shift_to_max_bits };
+        let y_bits = unsafe { grid_index.y.get_bits(0..grid_depth) << shift_to_max_bits };
 
         let (lower_bits, higher_bits) = match ordering {
             QuadrantOrdering::XY => (x_bits, y_bits),
@@ -169,58 +173,21 @@ impl<B: FixedStorageType> MortonIndex2D<StaticStorage2D<B>> {
         let mut bits = B::default();
         // Set bits in 8-bit chunks at a time
         let num_chunks = (grid_depth + 3) / 4;
-        for chunk_index in 0..num_chunks {
-            // For grid_depth values that are not divisible by 4, we have to 'align' the bits of the
-            // grid index towards the most significant bit, which I will try to explain here:
-            //   Grid index: X=11000101 Y=01101100
-            //                 |      |
-            //                MSB    LSB
-            //
-            //   The most significant bit of the grid index has to become the most significant bit of the Morton index
-            //   With a grid_depth of 8, we get the following chunks:
-            //     x1=1100 x2=0101 y1=0110 y2=1100
-            //   Which result in the following Morton index:
-            //     10 11 01 00 01 11 00 10
-            //     |_________| |_________|
-            //       x1 + y1     x2 + y2    (interleaved the bits)
-            //
-            //   Now suppose we had grid_depth = 5. This means taking the 5 LOWEST (*) bits of the grid index:
-            //     X=11000101 Y=01101100
-            //          |||||      |||||
-            //          vvvvv      vvvvv
-            //     X(5)=00101 Y(5)=01100
-            //   If we chunk these numbers into groups of 4 bits, we have two options (shown here for X(5)):
-            //     0010|1           0|0101
-            //        |                |
-            //        v                v
-            //     x1=0010 x2=1     x1'=0 x2'=0101
-            //   So which one do we choose? Remember that we always want the MSB of the grid index to end up as the
-            //   MSB of the Morton index, so the Morton index that we want is this one right here:
-            //     00 01 11 00 10
-            //     |_________| |_|
-            //   We can see that the first chunk of the Morton index corresponds to the interleaving of x1 and y1, so
-            //   the first split variant is used. Since this splits starting from the MSB, it splits our 5-bit number
-            //   into the bit ranges [1;5) and [0;1), instead of the (perhaps more intuitive?) [0;4) [4;5) variant.
-            //   Hence this weird calculation down there!
-            //
-            // (*) Why the LOWEST and not the HIGHEST bits? Because a grid index is just a number, and by saying 'This
-            //     grid index represents 5 levels' we really mean 'This grid index has only 5 bits' and thus we use the
-            //     same bit order as with regular numbers and start at the LOWEST bit
-            let end_bit = grid_depth - (chunk_index * 4);
-            let start_bit = end_bit.saturating_sub(4);
+        let max_chunks = (<FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS + 3) / 4;
+        let chunk_start = max_chunks - num_chunks;
+        for chunk_index in (chunk_start..max_chunks).rev() {
+            let start_bit = chunk_index * 4;
+            let end_bit = start_bit + 4;
             let lower_chunk = unsafe { lower_bits.get_bits(start_bit..end_bit) as u8 };
             let higher_chunk = unsafe { higher_bits.get_bits(start_bit..end_bit) as u8 };
             let chunk = add_zero_before_every_bit_u8(lower_chunk)
                 | add_zero_behind_every_bit_u8(higher_chunk);
 
-            let bits_in_current_chunk = end_bit - start_bit;
-            let end_bit_in_index = (num_chunks - chunk_index) * 8;
-            let start_bit_in_index = end_bit_in_index - 2 * bits_in_current_chunk;
+            // chunk contains 8 valid bits at most
+            let start_bit = chunk_index * 8;
+            let end_bit = start_bit + 8;
             unsafe {
-                // Maybe set the bits in BigEndian instead ?! Might require mirroring the bits of 'chunk'...
-                // Now everything is weird, the 'less-depth' thing works, but not the one with full depth?!?!
-                // Maybe use a simple implementation with 'set_cell_at_level_unchecked' as a reference?
-                bits.set_bits(start_bit_in_index..end_bit_in_index, B::from_u8(chunk));
+                bits.set_bits(start_bit..end_bit, B::from_u8(chunk));
             }
         }
 
@@ -1188,6 +1155,25 @@ mod tests {
                         QuadrantOrdering::YX,
                     )
                     .expect("Can't get Morton index from grid index");
+                    assert_eq!(idx, roundtrip_idx_yx);
+                }
+
+                #[test]
+                fn roundtrip_grid_index_with_one_level() {
+                    let quadrants = get_test_quadrants(1);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let grid_index_xy = idx.to_grid_index(QuadrantOrdering::XY);
+                    let roundtrip_idx_xy =
+                        $typename::from_grid_index(grid_index_xy, 1, QuadrantOrdering::XY)
+                            .expect("Can't get Morton index from grid index");
+                    assert_eq!(idx, roundtrip_idx_xy);
+
+                    let grid_index_yx = idx.to_grid_index(QuadrantOrdering::YX);
+                    let roundtrip_idx_yx =
+                        $typename::from_grid_index(grid_index_yx, 1, QuadrantOrdering::YX)
+                            .expect("Can't get Morton index from grid index");
                     assert_eq!(idx, roundtrip_idx_yx);
                 }
             }
