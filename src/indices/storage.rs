@@ -4,6 +4,7 @@ use crate::{dimensions::Dimension, FixedStorageType};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 
 pub trait StorageType {
     type Dimension: dimensions::Dimension;
@@ -64,12 +65,16 @@ pub trait Storage<D: Dimension>:
 
 /// Trait for any storage type of a Morton index that supports variable depth
 pub trait VariableDepthStorage<D: Dimension>: Storage<D> {
-    /// Returns a storage representing the parent index of the index stored in this storage. If this storage stores the
-    /// root node (i.e. it is empty), `None` is returned instead
-    fn parent(&self) -> Option<Self>;
-    /// Returns a storage representing the child at the given `cell` for the index stored in this storage. If this
-    /// storage is already at its maximum depth, `None` is returned instead
-    fn child(&self, cell: D::Cell) -> Option<Self>;
+    /// Returns a storage representing the ancestor index of the index stored in this storage. The number of `generations`
+    /// describes the level difference between this index and the ancestor index, e.g. `ancestor(1)` is the parent node,
+    /// `ancestor(2)` the parent of the parent (i.e. grandparent), and so on. If `generations` is larger than `self.depth()`,
+    /// `None` is returned.
+    fn ancestor(&self, generations: NonZeroUsize) -> Option<Self>;
+    /// Returns a storage representing the descendant index with the given `cells` of the index stored in this storage. `cells`
+    /// describe the child cells below this index, so `descendant(&[Quadrant::One])` is the child node at quadrant 1,
+    /// `descendant(&[Quadrant::One, Quadrant::Two])` is the child node at quadrant 2 of the child node at quadrant 1 of this index,
+    /// and so on. If the number of cells in the descendant node exceeds the capacity of this storage type, `None` is returned instead
+    fn descendant(&self, cells: &[D::Cell]) -> Option<Self>;
 }
 
 pub struct FixedDepthStorage<D: Dimension, B: FixedStorageType> {

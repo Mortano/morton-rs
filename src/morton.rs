@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::num::NonZeroUsize;
 
 /// When converting a Morton index to a string, these are the different ways to construct the string
 pub enum MortonIndexNaming {
@@ -98,4 +99,31 @@ pub trait MortonIndex: PartialOrd + Ord + PartialEq + Eq + Debug + Hash {
         &self,
         ordering: <Self::Dimension as crate::dimensions::Dimension>::CellOrdering,
     ) -> <Self::Dimension as crate::dimensions::Dimension>::GridIndex;
+}
+
+/// Trait for Morton index types that support variable depth. Provides methods to quickly obtain Morton indices for parent
+/// and child nodes.
+pub trait VariableDepthMortonIndex: MortonIndex + Sized {
+    /// Returns a Morton index for the ancestor node that is `generations` levels above this node.
+    /// As an example, `ancestor(1)` is the parent node of this node, `ancestor(2)` the parent of the parent, and so on.
+    /// Returns `None` if `generations`is larger than `self.depth()`.
+    fn ancestor(&self, generations: NonZeroUsize) -> Option<Self>;
+    /// Returns a Morton index representing the parent node of this Morton index. Returns `None` if this Morton index
+    /// represents the root node, i.e. `self.depth() == 0`.
+    fn parent(&self) -> Option<Self> {
+        self.ancestor(unsafe { NonZeroUsize::new_unchecked(1) })
+    }
+    /// Returns a Morton index for the descendant node with the given `cells` below this node.
+    /// As an example, `descendant(&[Quadrant::One])` is the child node at quadrant 1 of this node, `descendant(&[Quadrant::One, Quadrant::Two])`
+    /// is the child node at quadrant 2 below the child node at quadrant 1 below this node, and so on.
+    /// Returns `None` if the number of cells of the descendant node exceeds the maximum capacity of the Morton index type
+    fn descendant(
+        &self,
+        cells: &[<Self::Dimension as crate::dimensions::Dimension>::Cell],
+    ) -> Option<Self>;
+    /// Returns a Morton index for the child node at `cell` of this node.
+    /// Returns `None` if the number of cells of the child node exceeds the maximum capacity of the Morton index type
+    fn child(&self, cell: <Self::Dimension as crate::dimensions::Dimension>::Cell) -> Option<Self> {
+        self.descendant(&[cell])
+    }
 }

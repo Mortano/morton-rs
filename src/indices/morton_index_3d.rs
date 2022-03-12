@@ -10,7 +10,7 @@ use crate::{
     dimensions::{Dim3D, Dimension, Octant, OctantOrdering},
     number::{add_two_zeroes_before_every_bit_u8, Bits},
     CellIter, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming, StaticStorage,
-    StaticStorage2D, Storage, StorageType, VariableDepthStorage,
+    Storage, StorageType, VariableDepthMortonIndex, VariableDepthStorage,
 };
 
 pub type FixedDepthMortonIndex3D8 = MortonIndex3D<FixedDepthStorage3D<u8>>;
@@ -51,17 +51,20 @@ where
     }
 }
 
-impl<S: VariableDepthStorage<Dim3D>> MortonIndex3D<S> {
-    /// Returns a Morton index for the child `octant` of this Morton index. If this index is already at
-    /// the maximum depth, `None` is returned instead
-    pub fn child(&self, octant: Octant) -> Option<Self> {
-        self.storage.child(octant).map(|storage| Self { storage })
+impl<S: VariableDepthStorage<Dim3D>> VariableDepthMortonIndex for MortonIndex3D<S> {
+    fn ancestor(&self, generations: std::num::NonZeroUsize) -> Option<Self> {
+        self.storage
+            .ancestor(generations)
+            .map(|storage| Self { storage })
     }
 
-    /// Returns a Morton index for the parent node of this Morton index. If this index represents the root
-    /// node, `None` is returned instead
-    pub fn parent(&self) -> Option<Self> {
-        self.storage.parent().map(|storage| Self { storage })
+    fn descendant(
+        &self,
+        cells: &[<Self::Dimension as crate::dimensions::Dimension>::Cell],
+    ) -> Option<Self> {
+        self.storage
+            .descendant(cells)
+            .map(|storage| Self { storage })
     }
 }
 
@@ -395,32 +398,36 @@ impl<B: FixedStorageType> Storage<Dim3D> for StaticStorage3D<B> {
 }
 
 impl<B: FixedStorageType> VariableDepthStorage<Dim3D> for StaticStorage3D<B> {
-    fn parent(&self) -> Option<Self> {
-        if self.depth() == 0 {
+    fn ancestor(&self, generations: std::num::NonZeroUsize) -> Option<Self> {
+        if generations.get() > self.depth as usize {
             return None;
         }
 
         let mut ret = *self;
-        // Zero out the lowest octant to make sure that the new value does not have bits set at a higher position than
-        // what depth() indicates!
-        unsafe {
-            ret.set_cell_at_level_unchecked(self.depth() - 1, Octant::Zero);
+        // Zero out all quadrants below the new depth
+        let new_depth = self.depth - generations.get() as u8;
+        for level in new_depth..self.depth {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level as usize, Octant::Zero);
+            }
         }
-        ret.depth -= 1;
+        ret.depth = new_depth;
         Some(ret)
     }
 
-    fn child(&self, cell: <Dim3D as Dimension>::Cell) -> Option<Self> {
-        if self.depth() == <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+    fn descendant(&self, cells: &[<Dim3D as Dimension>::Cell]) -> Option<Self> {
+        let new_depth = self.depth as usize + cells.len();
+        if new_depth >= <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
             return None;
         }
 
         let mut ret = *self;
-        // Safe because of depth check above
-        unsafe {
-            ret.set_cell_at_level_unchecked(self.depth(), cell);
+        for (offset, cell) in cells.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(self.depth as usize + offset, *cell);
+            }
         }
-        ret.depth += 1;
+        ret.depth = new_depth as u8;
         Some(ret)
     }
 }

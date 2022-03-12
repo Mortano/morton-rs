@@ -8,7 +8,7 @@ use crate::dimensions::{Dim2D, Dimension, Quadrant, QuadrantOrdering};
 use crate::number::{add_zero_before_every_bit_u8, add_zero_behind_every_bit_u8, Bits, Endianness};
 use crate::{
     CellIter, DynamicStorage, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming,
-    StaticStorage, Storage, StorageType, VariableDepthStorage,
+    StaticStorage, Storage, StorageType, VariableDepthMortonIndex, VariableDepthStorage,
 };
 
 /// A 2D Morton index with a fixed depth of 4 levels (using a single `u8` value as storage)
@@ -60,17 +60,20 @@ where
     }
 }
 
-impl<S: VariableDepthStorage<Dim2D>> MortonIndex2D<S> {
-    /// Returns a Morton index for the child `quadrant` of this Morton index. If this index is already at
-    /// the maximum depth, `None` is returned instead
-    pub fn child(&self, quadrant: Quadrant) -> Option<Self> {
-        self.storage.child(quadrant).map(|storage| Self { storage })
+impl<S: VariableDepthStorage<Dim2D>> VariableDepthMortonIndex for MortonIndex2D<S> {
+    fn ancestor(&self, generations: std::num::NonZeroUsize) -> Option<Self> {
+        self.storage
+            .ancestor(generations)
+            .map(|storage| Self { storage })
     }
 
-    /// Returns a Morton index for the parent node of this Morton index. If this index represents the root
-    /// node, `None` is returned instead
-    pub fn parent(&self) -> Option<Self> {
-        self.storage.parent().map(|storage| Self { storage })
+    fn descendant(
+        &self,
+        cells: &[<Self::Dimension as crate::dimensions::Dimension>::Cell],
+    ) -> Option<Self> {
+        self.storage
+            .descendant(cells)
+            .map(|storage| Self { storage })
     }
 }
 
@@ -486,32 +489,36 @@ impl<B: FixedStorageType> PartialEq for StaticStorage2D<B> {
 impl<B: FixedStorageType> Eq for StaticStorage2D<B> {}
 
 impl<B: FixedStorageType> VariableDepthStorage<Dim2D> for StaticStorage2D<B> {
-    fn child(&self, quadrant: Quadrant) -> Option<Self> {
-        if self.depth() == <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
+    fn ancestor(&self, generations: std::num::NonZeroUsize) -> Option<Self> {
+        if generations.get() > self.depth as usize {
             return None;
         }
 
         let mut ret = *self;
-        // Safe because of depth check above
-        unsafe {
-            ret.set_cell_at_level_unchecked(self.depth(), quadrant);
+        // Zero out all quadrants below the new depth
+        let new_depth = self.depth - generations.get() as u8;
+        for level in new_depth..self.depth {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level as usize, Quadrant::Zero);
+            }
         }
-        ret.depth += 1;
+        ret.depth = new_depth;
         Some(ret)
     }
 
-    fn parent(&self) -> Option<Self> {
-        if self.depth() == 0 {
+    fn descendant(&self, cells: &[<Dim2D as Dimension>::Cell]) -> Option<Self> {
+        let new_depth = self.depth as usize + cells.len();
+        if new_depth >= <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return None;
         }
 
         let mut ret = *self;
-        // Zero out the lowest quadrant to make sure that the new value does not have bits set at a higher position than
-        // what depth() indicates!
-        unsafe {
-            ret.set_cell_at_level_unchecked(self.depth() - 1, Quadrant::Zero);
+        for (offset, cell) in cells.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(self.depth as usize + offset, *cell);
+            }
         }
-        ret.depth -= 1;
+        ret.depth = new_depth as u8;
         Some(ret)
     }
 }
@@ -619,41 +626,60 @@ impl Storage<Dim2D> for DynamicStorage2D {
 }
 
 impl VariableDepthStorage<Dim2D> for DynamicStorage2D {
-    fn parent(&self) -> Option<Self> {
-        match self.depth {
-            0 => None,
-            depth if depth % 4 == 1 => Some(Self {
-                bits: self.bits.iter().copied().skip(1).collect(),
-                depth: self.depth - 1,
-            }),
-            _ => {
-                let mut ret = self.clone();
-                unsafe {
-                    ret.set_cell_at_level_unchecked(self.depth - 1, Quadrant::Zero);
-                }
-                ret.depth -= 1;
-                Some(ret)
-            }
+    fn ancestor(&self, generations: std::num::NonZeroUsize) -> Option<Self> {
+        // ancestor is probably something like: Take the last N bits, where N = (depth_depth + 3) / 4, and then trim off the
+        // remaining bits within the last byte (like the _ case)
+        if generations.get() > self.depth {
+            return None;
         }
+        let new_depth = self.depth - generations.get();
+        let current_num_bytes = (self.depth + 3) / 4;
+        let new_num_bytes = (new_depth + 3) / 4;
+        let bytes_to_skip = current_num_bytes - new_num_bytes;
+        let mut new_bits = self
+            .bits
+            .iter()
+            .copied()
+            .skip(bytes_to_skip)
+            .collect::<Vec<_>>();
+        if new_num_bytes > 0 {
+            // Mask off the lowest 2*K bits (K=new_depth % 2)
+            let leftover_bits_in_last_byte = ((4 - new_depth) % 4) * 2;
+            // This is a mask with the lowest 'leftover_bits_in_last_byte' set to 0 and the rest to 1
+            let mask = !((1 << leftover_bits_in_last_byte) - 1);
+            new_bits[0] &= mask;
+        }
+
+        Some(Self {
+            bits: new_bits,
+            depth: new_depth,
+        })
     }
 
-    fn child(&self, quadrant: Quadrant) -> Option<Self> {
-        match self.depth {
-            depth if depth % 4 == 0 => {
-                let mut ret = self.clone();
-                ret.bits.insert(0, (quadrant.index() as u8) << 6);
-                ret.depth += 1;
-                Some(ret)
-            }
-            _ => {
-                let mut ret = self.clone();
-                unsafe {
-                    ret.set_cell_at_level_unchecked(self.depth, quadrant);
-                }
-                ret.depth += 1;
-                Some(ret)
+    fn descendant(&self, cells: &[<Dim2D as Dimension>::Cell]) -> Option<Self> {
+        // descendant is harder: figure out how many cells fit into the current bit, and push the rest as new bytes
+        // maybe implement it as a simple 'grow bits so that bits.len() * 4 can fit all levels', and then call 'set_cell_at_level_unchecked'
+        // to set all the cells
+        let new_depth = self.depth + cells.len();
+        let current_num_bytes = (self.depth + 3) / 4;
+        let new_num_bytes = (new_depth + 3) / 4;
+        let bytes_to_add = new_num_bytes - current_num_bytes;
+        let new_bits = self
+            .bits
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(0).take(bytes_to_add))
+            .collect::<Vec<_>>();
+        let mut ret = Self {
+            bits: new_bits,
+            depth: new_depth,
+        };
+        for (level_offset, cell) in cells.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(self.depth as usize + level_offset, *cell);
             }
         }
+        Some(ret)
     }
 }
 

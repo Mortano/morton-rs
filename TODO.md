@@ -5,3 +5,6 @@
     - `FixedDepthStorage` needs only a `const MAX_LEVELS: usize` and `const DIMENSIONALITY: usize`
     - Then we can impement `FixedDepthStorage` very easily for `FixedDepthStorage2D`, `FixedDepthStorage3D`
     - Maybe even have a generic `FixedDepthStorageND<Dimension, BitType>` struct?
+- Add a `ancestor` or `with_depth` method to variable-width Morton indices
+- Add a `VariableDepthMortonIndex` trait that supports `parent`, `child(cell)`, and `ancestor(depth)`
+    - Generalize `child(cell)` to `descendant(iter<cell>)`?
