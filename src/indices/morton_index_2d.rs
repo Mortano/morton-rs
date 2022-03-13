@@ -508,7 +508,7 @@ impl<B: FixedStorageType> VariableDepthStorage<Dim2D> for StaticStorage2D<B> {
 
     fn descendant(&self, cells: &[<Dim2D as Dimension>::Cell]) -> Option<Self> {
         let new_depth = self.depth as usize + cells.len();
-        if new_depth >= <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
+        if new_depth > <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return None;
         }
 
@@ -642,9 +642,10 @@ impl VariableDepthStorage<Dim2D> for DynamicStorage2D {
             .copied()
             .skip(bytes_to_skip)
             .collect::<Vec<_>>();
-        if new_num_bytes > 0 {
-            // Mask off the lowest 2*K bits (K=new_depth % 2)
-            let leftover_bits_in_last_byte = ((4 - new_depth) % 4) * 2;
+        let bits_in_first_byte = new_depth % 4;
+        if new_num_bytes > 0 && bits_in_first_byte > 0 {
+            // Mask off the lowest bits in the first byte. These bits contain cells for levels > new_depth
+            let leftover_bits_in_last_byte = (4 - bits_in_first_byte) * 2;
             // This is a mask with the lowest 'leftover_bits_in_last_byte' set to 0 and the rest to 1
             let mask = !((1 << leftover_bits_in_last_byte) - 1);
             new_bits[0] &= mask;
@@ -664,11 +665,9 @@ impl VariableDepthStorage<Dim2D> for DynamicStorage2D {
         let current_num_bytes = (self.depth + 3) / 4;
         let new_num_bytes = (new_depth + 3) / 4;
         let bytes_to_add = new_num_bytes - current_num_bytes;
-        let new_bits = self
-            .bits
-            .iter()
-            .copied()
-            .chain(std::iter::repeat(0).take(bytes_to_add))
+        let new_bits = std::iter::repeat(0)
+            .take(bytes_to_add)
+            .chain(self.bits.iter().copied())
             .collect::<Vec<_>>();
         let mut ret = Self {
             bits: new_bits,
@@ -1001,6 +1000,7 @@ mod tests {
         ($typename:ident, $modname:ident, $max_levels:literal) => {
             mod $modname {
                 use super::*;
+                use std::num::NonZeroUsize;
 
                 const MAX_LEVELS: usize = $max_levels;
 
@@ -1089,6 +1089,25 @@ mod tests {
                 }
 
                 #[test]
+                fn descendant_multi_levels() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let idx = $typename::try_from(&quadrants[0..MAX_LEVELS - 2])
+                        .expect("Could not create Morton index from quadrants");
+                    let child_idx = idx.descendant(&quadrants[(MAX_LEVELS - 2)..MAX_LEVELS]);
+                    let expected_idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(Some(expected_idx), child_idx);
+                }
+
+                #[test]
+                fn descendant_too_far_yields_none() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(None, idx.descendant(&[Quadrant::Zero]));
+                }
+
+                #[test]
                 fn parent() {
                     let quadrants = get_test_quadrants(MAX_LEVELS);
                     let parent_quadrants = &quadrants[0..MAX_LEVELS - 1];
@@ -1103,6 +1122,44 @@ mod tests {
                 fn parent_of_root_yields_none() {
                     let root = $typename::default();
                     assert_eq!(None, root.parent());
+                }
+
+                #[test]
+                fn ancestor_multi() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let ancestor_generations = 3;
+                    let parent_quadrants = &quadrants[0..(MAX_LEVELS - ancestor_generations)];
+                    let child = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    let expected_parent = $typename::try_from(parent_quadrants)
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(
+                        Some(expected_parent),
+                        child.ancestor(NonZeroUsize::new(ancestor_generations).unwrap())
+                    );
+                }
+
+                #[test]
+                fn ancestor_to_root() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let child = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    let expected_parent = $typename::default();
+                    assert_eq!(
+                        Some(expected_parent),
+                        child.ancestor(NonZeroUsize::new(MAX_LEVELS).unwrap())
+                    );
+                }
+
+                #[test]
+                fn ancestor_too_far_yields_none() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let child = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(
+                        None,
+                        child.ancestor(NonZeroUsize::new(MAX_LEVELS + 1).unwrap())
+                    );
                 }
 
                 #[test]
@@ -1210,6 +1267,7 @@ mod tests {
         ($typename:ident, $modname:ident) => {
             mod $modname {
                 use super::*;
+                use std::num::NonZeroUsize;
 
                 #[test]
                 fn default() {
@@ -1297,6 +1355,17 @@ mod tests {
                 }
 
                 #[test]
+                fn descendant_multi_levels() {
+                    let quadrants = get_test_quadrants(6);
+                    let idx = $typename::try_from(&quadrants[0..4])
+                        .expect("Could not create Morton index from quadrants");
+                    let child_idx = idx.descendant(&quadrants[4..6]);
+                    let expected_idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(Some(expected_idx), child_idx);
+                }
+
+                #[test]
                 fn parent_4() {
                     let depth = 4;
                     let quadrants = get_test_quadrants(depth);
@@ -1324,6 +1393,41 @@ mod tests {
                 fn parent_of_root_yields_none() {
                     let root = $typename::default();
                     assert_eq!(None, root.parent());
+                }
+
+                #[test]
+                fn ancestor_multi() {
+                    let quadrants = get_test_quadrants(8);
+                    let ancestor_generations = 3;
+                    let parent_quadrants = &quadrants[0..(8 - ancestor_generations)];
+                    let child = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    let expected_parent = $typename::try_from(parent_quadrants)
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(
+                        Some(expected_parent),
+                        child.ancestor(NonZeroUsize::new(ancestor_generations).unwrap())
+                    );
+                }
+
+                #[test]
+                fn ancestor_to_root() {
+                    let quadrants = get_test_quadrants(5);
+                    let child = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    let expected_parent = $typename::default();
+                    assert_eq!(
+                        Some(expected_parent),
+                        child.ancestor(NonZeroUsize::new(5).unwrap())
+                    );
+                }
+
+                #[test]
+                fn ancestor_too_far_yields_none() {
+                    let quadrants = get_test_quadrants(4);
+                    let child = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(None, child.ancestor(NonZeroUsize::new(5).unwrap()));
                 }
 
                 #[test]

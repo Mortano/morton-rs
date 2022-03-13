@@ -417,7 +417,7 @@ impl<B: FixedStorageType> VariableDepthStorage<Dim3D> for StaticStorage3D<B> {
 
     fn descendant(&self, cells: &[<Dim3D as Dimension>::Cell]) -> Option<Self> {
         let new_depth = self.depth as usize + cells.len();
-        if new_depth >= <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+        if new_depth > <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
             return None;
         }
 
@@ -675,6 +675,7 @@ mod tests {
         ($typename:ident, $modname:ident, $max_levels:literal) => {
             mod $modname {
                 use super::*;
+                use std::num::NonZeroUsize;
 
                 const MAX_LEVELS: usize = $max_levels;
 
@@ -772,6 +773,25 @@ mod tests {
                 }
 
                 #[test]
+                fn descendant_multi_levels() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let idx = $typename::try_from(&octants[0..MAX_LEVELS - 1])
+                        .expect("Could not create Morton index from octants");
+                    let child_idx = idx.descendant(&octants[(MAX_LEVELS - 1)..MAX_LEVELS]);
+                    let expected_idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(Some(expected_idx), child_idx);
+                }
+
+                #[test]
+                fn descendant_too_far_yields_none() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(None, idx.descendant(&[Octant::Zero]));
+                }
+
+                #[test]
                 fn parent() {
                     let octants = get_test_octants(MAX_LEVELS);
                     let parent_octants = &octants[0..MAX_LEVELS - 1];
@@ -786,6 +806,44 @@ mod tests {
                 fn parent_of_root_yields_none() {
                     let root = $typename::default();
                     assert_eq!(None, root.parent());
+                }
+
+                #[test]
+                fn ancestor_multi() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let ancestor_generations = 1;
+                    let parent_octants = &octants[0..(MAX_LEVELS - ancestor_generations)];
+                    let child = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    let expected_parent = $typename::try_from(parent_octants)
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(
+                        Some(expected_parent),
+                        child.ancestor(NonZeroUsize::new(ancestor_generations).unwrap())
+                    );
+                }
+
+                #[test]
+                fn ancestor_to_root() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let child = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    let expected_parent = $typename::default();
+                    assert_eq!(
+                        Some(expected_parent),
+                        child.ancestor(NonZeroUsize::new(MAX_LEVELS).unwrap())
+                    );
+                }
+
+                #[test]
+                fn ancestor_too_far_yields_none() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let child = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(
+                        None,
+                        child.ancestor(NonZeroUsize::new(MAX_LEVELS + 1).unwrap())
+                    );
                 }
 
                 #[test]
