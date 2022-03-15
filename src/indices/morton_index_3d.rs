@@ -8,7 +8,7 @@ use nalgebra::Vector3;
 
 use crate::{
     dimensions::{Dim3D, Dimension, Octant, OctantOrdering},
-    number::{add_two_zeroes_before_every_bit_u8, Bits},
+    number::{add_two_zeroes_before_every_bit_u8, Bits, Endianness},
     CellIter, DynamicStorage, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming,
     StaticStorage, Storage, StorageType, VariableDepthMortonIndex, VariableDepthStorage,
 };
@@ -725,6 +725,128 @@ impl<'a> IntoIterator for &'a DynamicStorage3D {
     }
 }
 
+// Conversions
+
+impl<B: FixedStorageType> From<MortonIndex3D<FixedDepthStorage3D<B>>>
+    for MortonIndex3D<StaticStorage3D<B>>
+{
+    fn from(fixed_index: MortonIndex3D<FixedDepthStorage3D<B>>) -> Self {
+        Self {
+            storage: StaticStorage3D {
+                bits: fixed_index.storage.bits,
+                depth: StaticStorage::<Dim3D, B>::MAX_LEVELS as u8,
+            },
+        }
+    }
+}
+
+impl<B: FixedStorageType> From<MortonIndex3D<FixedDepthStorage3D<B>>>
+    for MortonIndex3D<DynamicStorage3D>
+{
+    fn from(fixed_index: MortonIndex3D<FixedDepthStorage3D<B>>) -> Self {
+        let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
+        #[cfg(target_endian = "little")]
+        let bits = native_bits.to_owned();
+        #[cfg(target_endian = "big")]
+        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
+        Self {
+            storage: DynamicStorage3D {
+                bits,
+                depth: FixedDepthStorage::<Dim3D, B>::MAX_LEVELS,
+            },
+        }
+    }
+}
+
+impl<B: FixedStorageType> From<MortonIndex3D<StaticStorage3D<B>>>
+    for MortonIndex3D<FixedDepthStorage3D<B>>
+{
+    fn from(static_index: MortonIndex3D<StaticStorage3D<B>>) -> Self {
+        Self {
+            storage: FixedDepthStorage3D {
+                bits: static_index.storage.bits,
+            },
+        }
+    }
+}
+
+impl<B: FixedStorageType> From<MortonIndex3D<StaticStorage3D<B>>>
+    for MortonIndex3D<DynamicStorage3D>
+{
+    fn from(fixed_index: MortonIndex3D<StaticStorage3D<B>>) -> Self {
+        let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
+        #[cfg(target_endian = "little")]
+        let bits = native_bits.to_owned();
+        #[cfg(target_endian = "big")]
+        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
+        Self {
+            storage: DynamicStorage3D {
+                bits,
+                depth: StaticStorage::<Dim3D, B>::MAX_LEVELS,
+            },
+        }
+    }
+}
+
+// The conversion from a dynamic index to other index types are dependent of a runtime parameter (the depth() of the dynamic
+// index) and as such these conversions can fail at runtime. Which is why dynamic conversions only implement `TryFrom`
+
+impl<B: FixedStorageType> TryFrom<MortonIndex3D<DynamicStorage3D>>
+    for MortonIndex3D<FixedDepthStorage3D<B>>
+{
+    type Error = crate::Error;
+
+    fn try_from(value: MortonIndex3D<DynamicStorage3D>) -> Result<Self, Self::Error> {
+        if value.depth() > FixedDepthStorage::<Dim3D, B>::MAX_LEVELS {
+            Err(crate::Error::DepthLimitedExceeded {
+                max_depth: FixedDepthStorage::<Dim3D, B>::MAX_LEVELS,
+            })
+        } else {
+            // DynamicStorage3D stores its cells as BigEndian, FixedDepthStorage3D uses the native endianness of the current
+            // machine
+            #[cfg(target_endian = "little")]
+            let endianness = Endianness::LittleEndian;
+            #[cfg(target_endian = "big")]
+            let endianness = Endianness::BigEndian;
+            let bytes = value.storage.bits.as_slice();
+            Ok(Self {
+                storage: FixedDepthStorage3D {
+                    bits: unsafe { B::from_u8_slice(bytes, endianness) },
+                },
+            })
+        }
+    }
+}
+
+impl<B: FixedStorageType> TryFrom<MortonIndex3D<DynamicStorage3D>>
+    for MortonIndex3D<StaticStorage3D<B>>
+{
+    type Error = crate::Error;
+
+    fn try_from(value: MortonIndex3D<DynamicStorage3D>) -> Result<Self, Self::Error> {
+        if value.depth() > FixedDepthStorage::<Dim3D, B>::MAX_LEVELS {
+            Err(crate::Error::DepthLimitedExceeded {
+                max_depth: FixedDepthStorage::<Dim3D, B>::MAX_LEVELS,
+            })
+        } else {
+            // TODO There might be a way to optimize this code by directly setting the bits of the StaticStorage3D, however
+            // it involves potentially extracting less than a byte worth of data from the DynamicStorage
+            let mut ret: MortonIndex3D<StaticStorage3D<B>> = Default::default();
+            for level in 0..value.depth() {
+                // Safe because of depth check above
+                unsafe {
+                    ret.set_cell_at_level_unchecked(
+                        level,
+                        value.get_cell_at_level_unchecked(level),
+                    );
+                }
+            }
+            ret.storage.depth = value.depth() as u8;
+            Ok(ret)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1398,6 +1520,163 @@ mod tests {
         };
     }
 
+    macro_rules! test_conversions {
+        ($max_levels:literal, $datatype:ident, $modname:ident) => {
+            mod $modname {
+                use super::*;
+
+                type FixedType = MortonIndex3D<FixedDepthStorage3D<$datatype>>;
+                type StaticType = MortonIndex3D<StaticStorage3D<$datatype>>;
+                type DynamicType = MortonIndex3D<DynamicStorage3D>;
+
+                #[test]
+                fn convert_fixed_to_static() {
+                    let octants = get_test_octants($max_levels);
+                    let fixed_index = FixedType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let static_index: StaticType = fixed_index.into();
+
+                    assert_eq!($max_levels, static_index.depth());
+                    let expected_cells = fixed_index.cells().collect::<Vec<_>>();
+                    let actual_cells = static_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_fixed_to_dynamic() {
+                    let octants = get_test_octants($max_levels);
+                    let fixed_index = FixedType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let dynamic_index: DynamicType = fixed_index.into();
+
+                    assert_eq!($max_levels, dynamic_index.depth());
+                    let expected_cells = fixed_index.cells().collect::<Vec<_>>();
+                    let actual_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_fixed() {
+                    let octants = get_test_octants($max_levels);
+                    let static_index = StaticType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let fixed_index: FixedType = static_index.into();
+
+                    let expected_cells = static_index.cells().collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_fixed_with_fewer_levels() {
+                    let octants = get_test_octants($max_levels / 2);
+                    let static_index = StaticType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let fixed_index: FixedType = static_index.into();
+
+                    // The remaining levels should be zero-filled in a conversion from static to fixed-depth index
+                    let append_cells = std::iter::once(Octant::Zero)
+                        .cycle()
+                        .take(($max_levels + 1) / 2);
+                    let expected_cells =
+                        static_index.cells().chain(append_cells).collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_dynamic() {
+                    let octants = get_test_octants($max_levels);
+                    let static_index = StaticType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let dynamic_index: DynamicType = static_index.into();
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = static_index.cells().collect::<Vec<_>>();
+                    let actual_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_fixed() {
+                    let octants = get_test_octants($max_levels);
+                    let dynamic_index = DynamicType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let fixed_index: FixedType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    let expected_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_fixed_with_fewer_levels() {
+                    // Subtracting an odd number from the max cells to test edge cases
+                    let octants = get_test_octants($max_levels - 1);
+                    let dynamic_index = DynamicType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let fixed_index: FixedType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    let padding_cells = std::iter::repeat(Octant::Zero).take(1);
+                    let expected_cells = dynamic_index
+                        .cells()
+                        .chain(padding_cells)
+                        .collect::<Vec<_>>();
+                    let actual_cells = fixed_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_static() {
+                    let octants = get_test_octants($max_levels);
+                    let dynamic_index = DynamicType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let static_index: StaticType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    let actual_cells = static_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_dynamic_to_static_with_fewer_levels() {
+                    // Subtracting an odd number from the max cells to test edge cases
+                    let octants = get_test_octants($max_levels - 1);
+                    let dynamic_index = DynamicType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let static_index: StaticType = dynamic_index
+                        .clone()
+                        .try_into()
+                        .expect("Can't convert dynamic index to fixed depth index");
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    let actual_cells = static_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+            }
+        };
+    }
+
     //
     test_fixed_depth!(FixedDepthMortonIndex3D8, fixed_depth_morton_index_3d8, 2);
     test_fixed_depth!(FixedDepthMortonIndex3D16, fixed_depth_morton_index_3d16, 5);
@@ -1416,4 +1695,10 @@ mod tests {
     test_static!(StaticMortonIndex3D128, static_morton_index_3d128, 42);
 
     test_dynamic!(DynamicMortonIndex3D, dynamic_morton_index_3d);
+
+    test_conversions!(2, u8, conversions_3d8);
+    test_conversions!(5, u16, conversions_3d16);
+    test_conversions!(10, u32, conversions_3d32);
+    test_conversions!(21, u64, conversions_3d64);
+    test_conversions!(42, u128, conversions_3d128);
 }
