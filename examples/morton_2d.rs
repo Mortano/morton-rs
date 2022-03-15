@@ -9,15 +9,12 @@ fn main() -> morton_rs::Result<()> {
     // The simplest one is the `FixedDepth` storage type. Morton indices with this storage always have the
     // same depth. As an example, here is a 2D Morton index which uses 8 bits internal storage, so always
     // represents a depth of 4 (2 bits per level, because we are in 2D)
-    let mut fixed_index = FixedDepthMortonIndex2D8::try_from(
-        [
-            Quadrant::Zero,
-            Quadrant::One,
-            Quadrant::Two,
-            Quadrant::Three,
-        ]
-        .as_slice(),
-    )?;
+    let mut fixed_index = FixedDepthMortonIndex2D8::try_from([
+        Quadrant::Zero,
+        Quadrant::One,
+        Quadrant::Two,
+        Quadrant::Three,
+    ])?;
     assert_eq!(4, fixed_index.depth());
 
     // You can access the cells by their level (where level 0 is the quadrant below the root node of a quadtree)

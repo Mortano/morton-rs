@@ -13,8 +13,6 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-// Unify the storage traits (FixedDepth, Static, Dynamic) for any dimension here
-// Unify cell iterator for any dimensions (should work by just calling the appropriate functions on the storage)
 // TODO Can we specify trait implementations for specific dimensions? It's probably hard to generalize `from_grid_index`?!
 
 /// Iterator over cells of a Morton index

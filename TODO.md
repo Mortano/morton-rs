@@ -1,7 +1,4 @@
 - to_grid_index ok that it returns VectorX<usize>, or should it return Result<VectorX<usize>> because values might not fit in usize?
 - Optimization in `DynamicStorage2D`: Implement `cmp` by doing a bitwise comparison instead of cell-by-cell. This requires that we implement `Bits` for `[u8]`, which might be a bit tricky
-- Further generalization between 2D and 3D storages. The `FixedDepthStorageND` types can be implemented both for 2D and 3D with basically the same implementation, the only thing that is different is the dimensionality, which we need as a number constant on the `Dimension` type
-    - Make a `FixedDepthStorage` trait and implement `Storage<D: Dimension>` for any type that implements `FixedDepthStorage`
-    - `FixedDepthStorage` needs only a `const MAX_LEVELS: usize` and `const DIMENSIONALITY: usize`
-    - Then we can impement `FixedDepthStorage` very easily for `FixedDepthStorage2D`, `FixedDepthStorage3D`
-    - Maybe even have a generic `FixedDepthStorageND<Dimension, BitType>` struct?
+- Further generalization between 2D and 3D Morton indices. The implementations are often very similar, with slight changes due to different dimensionality. There are some 'heavy lifters', e.g. the `from_grid_index` functions, but a lot is identical as well. Find out how this could be simplified further
+    - Not sure if unifying more actually makes the code simpler though...
