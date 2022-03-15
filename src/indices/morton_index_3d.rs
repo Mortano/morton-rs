@@ -80,6 +80,16 @@ impl<'a, S: Storage<Dim3D> + TryFrom<&'a [Octant], Error = crate::Error>> TryFro
     }
 }
 
+impl<S: Storage<Dim3D> + TryFrom<[Octant; N], Error = crate::Error>, const N: usize>
+    TryFrom<[Octant; N]> for MortonIndex3D<S>
+{
+    type Error = crate::Error;
+
+    fn try_from(value: [Octant; N]) -> Result<Self, Self::Error> {
+        S::try_from(value).map(|storage| Self { storage })
+    }
+}
+
 impl<S: Storage<Dim3D>> MortonIndex for MortonIndex3D<S> {
     type Dimension = Dim3D;
 
@@ -412,6 +422,25 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Octant]> for FixedDepthStorage3D<B> {
     }
 }
 
+impl<B: FixedStorageType, const N: usize> TryFrom<[Octant; N]> for FixedDepthStorage3D<B> {
+    type Error = crate::Error;
+
+    fn try_from(octants: [Octant; N]) -> Result<Self, Self::Error> {
+        if N > <FixedDepthStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: <FixedDepthStorage<Dim3D, B> as StorageType>::MAX_LEVELS,
+            });
+        }
+        let mut ret: Self = Default::default();
+        for (level, cell) in octants.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level, *cell);
+            }
+        }
+        Ok(ret)
+    }
+}
+
 impl<'a, B: FixedStorageType> IntoIterator for &'a FixedDepthStorage3D<B> {
     type Item = Octant;
     type IntoIter = CellIter<'a, Dim3D, FixedDepthStorage3D<B>>;
@@ -551,6 +580,26 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Octant]> for StaticStorage3D<B> {
             }
         }
         ret.depth = octants.len() as u8;
+        Ok(ret)
+    }
+}
+
+impl<B: FixedStorageType, const N: usize> TryFrom<[Octant; N]> for StaticStorage3D<B> {
+    type Error = crate::Error;
+
+    fn try_from(octants: [Octant; N]) -> Result<Self, Self::Error> {
+        if N > <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: <StaticStorage<Dim3D, B> as StorageType>::MAX_LEVELS,
+            });
+        }
+        let mut ret: Self = Default::default();
+        for (level, cell) in octants.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level, *cell);
+            }
+        }
+        ret.depth = N as u8;
         Ok(ret)
     }
 }
@@ -702,6 +751,24 @@ impl<'a> TryFrom<&'a [Octant]> for DynamicStorage3D {
         let mut storage = Self {
             bits: vec![0; num_bytes],
             depth: octants.len(),
+        };
+        for (level, octant) in octants.iter().enumerate() {
+            unsafe {
+                storage.set_cell_at_level_unchecked(level, *octant);
+            }
+        }
+        Ok(storage)
+    }
+}
+
+impl<const N: usize> TryFrom<[Octant; N]> for DynamicStorage3D {
+    type Error = crate::Error;
+
+    fn try_from(octants: [Octant; N]) -> Result<Self, Self::Error> {
+        let num_bytes = ((N * 3) + 7) / 8;
+        let mut storage = Self {
+            bits: vec![0; num_bytes],
+            depth: N,
         };
         for (level, octant) in octants.iter().enumerate() {
             unsafe {
@@ -890,6 +957,22 @@ mod tests {
                 }
 
                 #[test]
+                fn from_octants_array() {
+                    let octants = [Octant::Three, Octant::Two];
+                    let idx = $typename::try_from(octants)
+                        .expect("Could not create Morton index from octants");
+
+                    let leftover_cells =
+                        std::iter::repeat(Octant::Zero).take(MAX_LEVELS - octants.len());
+                    let expected_cells = octants
+                        .iter()
+                        .copied()
+                        .chain(leftover_cells)
+                        .collect::<Vec<_>>();
+                    assert_eq!(expected_cells, idx.cells().collect::<Vec<_>>());
+                }
+
+                #[test]
                 fn from_too_many_octants_fails() {
                     let octants = get_test_octants(MAX_LEVELS + 1);
                     let res = $typename::try_from(octants.as_slice());
@@ -1024,6 +1107,17 @@ mod tests {
                     for (level, expected_octant) in octants.iter().enumerate() {
                         assert_eq!(*expected_octant, idx.get_cell_at_level(level));
                     }
+                }
+
+                #[test]
+                fn from_octants_array() {
+                    let octants = [Octant::Three, Octant::Two];
+                    let idx = $typename::try_from(octants)
+                        .expect("Could not create Morton index from octants");
+
+                    assert_eq!(octants.len(), idx.depth());
+                    let expected_cells = octants.iter().copied().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, idx.cells().collect::<Vec<_>>());
                 }
 
                 #[test]
@@ -1312,6 +1406,17 @@ mod tests {
                     for (level, expected_octant) in octants.iter().enumerate() {
                         assert_eq!(*expected_octant, idx.get_cell_at_level(level));
                     }
+                }
+
+                #[test]
+                fn from_octants_array() {
+                    let octants = [Octant::Three, Octant::Two];
+                    let idx = $typename::try_from(octants)
+                        .expect("Could not create Morton index from octants");
+
+                    assert_eq!(octants.len(), idx.depth());
+                    let expected_cells = octants.iter().copied().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, idx.cells().collect::<Vec<_>>());
                 }
 
                 #[test]
@@ -1677,7 +1782,6 @@ mod tests {
         };
     }
 
-    //
     test_fixed_depth!(FixedDepthMortonIndex3D8, fixed_depth_morton_index_3d8, 2);
     test_fixed_depth!(FixedDepthMortonIndex3D16, fixed_depth_morton_index_3d16, 5);
     test_fixed_depth!(FixedDepthMortonIndex3D32, fixed_depth_morton_index_3d32, 10);

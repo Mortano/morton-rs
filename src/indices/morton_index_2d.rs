@@ -280,6 +280,16 @@ impl<'a, S: Storage<Dim2D> + TryFrom<&'a [Quadrant], Error = crate::Error>> TryF
     }
 }
 
+impl<'a, S: Storage<Dim2D> + TryFrom<[Quadrant; N], Error = crate::Error>, const N: usize>
+    TryFrom<[Quadrant; N]> for MortonIndex2D<S>
+{
+    type Error = crate::Error;
+
+    fn try_from(value: [Quadrant; N]) -> Result<Self, Self::Error> {
+        S::try_from(value).map(|storage| Self { storage })
+    }
+}
+
 // TODO Don't know how to write this implementation in terms of TryFrom<&'a [Quadrant]> ...
 // impl<'a, S: Storage<Dim2D> + TryFrom<&'a [Quadrant], Error = crate::Error>, const N: usize>
 //     TryFrom<[Quadrant; N]> for MortonIndex2D<S>
@@ -381,6 +391,28 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Quadrant]> for FixedDepthStorage2D<B>
 
     fn try_from(quadrants: &'a [Quadrant]) -> Result<Self, Self::Error> {
         if quadrants.len() > <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS,
+            });
+        }
+        let mut ret: Self = Default::default();
+        for (level, cell) in quadrants.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level, *cell);
+            }
+        }
+        Ok(ret)
+    }
+}
+
+// We can't implement FromIterator, because if the iterator has too many elements, it won't fit into the FixedDepthStorage
+// We would need a TryFromIterator trait, which doesn't exist
+
+impl<B: FixedStorageType, const N: usize> TryFrom<[Quadrant; N]> for FixedDepthStorage2D<B> {
+    type Error = crate::Error;
+
+    fn try_from(quadrants: [Quadrant; N]) -> Result<Self, Self::Error> {
+        if N > <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
             return Err(crate::Error::DepthLimitedExceeded {
                 max_depth: <FixedDepthStorage<Dim2D, B> as StorageType>::MAX_LEVELS,
             });
@@ -543,6 +575,26 @@ impl<'a, B: FixedStorageType> TryFrom<&'a [Quadrant]> for StaticStorage2D<B> {
     }
 }
 
+impl<B: FixedStorageType, const N: usize> TryFrom<[Quadrant; N]> for StaticStorage2D<B> {
+    type Error = crate::Error;
+
+    fn try_from(quadrants: [Quadrant; N]) -> Result<Self, Self::Error> {
+        if N > <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS {
+            return Err(crate::Error::DepthLimitedExceeded {
+                max_depth: <StaticStorage<Dim2D, B> as StorageType>::MAX_LEVELS,
+            });
+        }
+        let mut ret: Self = Default::default();
+        for (level, cell) in quadrants.iter().enumerate() {
+            unsafe {
+                ret.set_cell_at_level_unchecked(level, *cell);
+            }
+        }
+        ret.depth = N as u8;
+        Ok(ret)
+    }
+}
+
 impl<'a, B: FixedStorageType> IntoIterator for &'a StaticStorage2D<B> {
     type Item = Quadrant;
     type IntoIter = CellIter<'a, Dim2D, StaticStorage2D<B>>;
@@ -690,6 +742,24 @@ impl<'a> TryFrom<&'a [Quadrant]> for DynamicStorage2D {
         let mut storage = Self {
             bits: vec![0; num_bytes],
             depth: quadrants.len(),
+        };
+        for (level, quadrant) in quadrants.iter().enumerate() {
+            unsafe {
+                storage.set_cell_at_level_unchecked(level, *quadrant);
+            }
+        }
+        Ok(storage)
+    }
+}
+
+impl<const N: usize> TryFrom<[Quadrant; N]> for DynamicStorage2D {
+    type Error = crate::Error;
+
+    fn try_from(quadrants: [Quadrant; N]) -> Result<Self, Self::Error> {
+        let num_bytes = (N + 3) / 4;
+        let mut storage = Self {
+            bits: vec![0; num_bytes],
+            depth: N,
         };
         for (level, quadrant) in quadrants.iter().enumerate() {
             unsafe {
@@ -888,6 +958,27 @@ mod tests {
                 }
 
                 #[test]
+                fn from_quadrants_array() {
+                    let quadrants = [
+                        Quadrant::Three,
+                        Quadrant::Two,
+                        Quadrant::Zero,
+                        Quadrant::One,
+                    ];
+                    let idx = $typename::try_from(quadrants)
+                        .expect("Could not create Morton index from quadrants");
+
+                    let leftover_cells =
+                        std::iter::repeat(Quadrant::Zero).take(MAX_LEVELS - quadrants.len());
+                    let expected_cells = quadrants
+                        .iter()
+                        .copied()
+                        .chain(leftover_cells)
+                        .collect::<Vec<_>>();
+                    assert_eq!(expected_cells, idx.cells().collect::<Vec<_>>());
+                }
+
+                #[test]
                 fn from_too_many_quadrants_fails() {
                     let quadrants = get_test_quadrants(MAX_LEVELS + 1);
                     let res = $typename::try_from(quadrants.as_slice());
@@ -1019,6 +1110,22 @@ mod tests {
                     for (level, expected_quadrant) in quadrants.iter().enumerate() {
                         assert_eq!(*expected_quadrant, idx.get_cell_at_level(level));
                     }
+                }
+
+                #[test]
+                fn from_quadrants_array() {
+                    let quadrants = [
+                        Quadrant::Three,
+                        Quadrant::Two,
+                        Quadrant::Zero,
+                        Quadrant::One,
+                    ];
+                    let idx = $typename::try_from(quadrants)
+                        .expect("Could not create Morton index from quadrants");
+
+                    assert_eq!(quadrants.len(), idx.depth());
+                    let expected_cells = quadrants.iter().copied().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, idx.cells().collect::<Vec<_>>());
                 }
 
                 #[test]
@@ -1295,6 +1402,22 @@ mod tests {
                     for (level, expected_quadrant) in quadrants.iter().enumerate() {
                         assert_eq!(*expected_quadrant, idx.get_cell_at_level(level));
                     }
+                }
+
+                #[test]
+                fn from_quadrants_array() {
+                    let quadrants = [
+                        Quadrant::Three,
+                        Quadrant::Two,
+                        Quadrant::Zero,
+                        Quadrant::One,
+                    ];
+                    let idx = $typename::try_from(quadrants)
+                        .expect("Could not create Morton index from quadrants");
+
+                    assert_eq!(quadrants.len(), idx.depth());
+                    let expected_cells = quadrants.iter().copied().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, idx.cells().collect::<Vec<_>>());
                 }
 
                 #[test]

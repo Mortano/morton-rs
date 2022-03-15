@@ -8,7 +8,7 @@ fn main() -> morton_rs::Result<()> {
     // You have a choice of three different storage types
     // The simplest one is the `FixedDepth` storage type. Morton indices with this storage always have the
     // same depth. As an example, here is a 2D Morton index which uses 8 bits internal storage, so always
-    // represents a depth of 4
+    // represents a depth of 4 (2 bits per level, because we are in 2D)
     let mut fixed_index = FixedDepthMortonIndex2D8::try_from(
         [
             Quadrant::Zero,
