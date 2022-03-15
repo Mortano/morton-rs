@@ -13,21 +13,30 @@ use crate::{
     StaticStorage, Storage, StorageType, VariableDepthMortonIndex, VariableDepthStorage,
 };
 
+/// A 3D Morton index with a fixed depth of 2 levels (using a single `u8` value as storage)
 pub type FixedDepthMortonIndex3D8 = MortonIndex3D<FixedDepthStorage3D<u8>>;
+/// A 3D Morton index with a fixed depth of 5 levels (using a single `u16` value as storage)
 pub type FixedDepthMortonIndex3D16 = MortonIndex3D<FixedDepthStorage3D<u16>>;
+/// A 3D Morton index with a fixed depth of 10 levels (using a single `u32` value as storage)
 pub type FixedDepthMortonIndex3D32 = MortonIndex3D<FixedDepthStorage3D<u32>>;
+/// A 3D Morton index with a fixed depth of 21 levels (using a single `u64` value as storage)
 pub type FixedDepthMortonIndex3D64 = MortonIndex3D<FixedDepthStorage3D<u64>>;
+/// A 3D Morton index with a fixed depth of 42 levels (using a single `u128` value as storage)
 pub type FixedDepthMortonIndex3D128 = MortonIndex3D<FixedDepthStorage3D<u128>>;
-
+/// A 3D Morton index with variable depth, but a statically-determined maximum depth of 2 levels (using a single `u8` value as storage)
 pub type StaticMortonIndex3D8 = MortonIndex3D<StaticStorage3D<u8>>;
+/// A 3D Morton index with variable depth, but a statically-determined maximum depth of 5 levels (using a single `u16` value as storage)
 pub type StaticMortonIndex3D16 = MortonIndex3D<StaticStorage3D<u16>>;
+/// A 3D Morton index with variable depth, but a statically-determined maximum depth of 10 levels (using a single `u32` value as storage)
 pub type StaticMortonIndex3D32 = MortonIndex3D<StaticStorage3D<u32>>;
+/// A 3D Morton index with variable depth, but a statically-determined maximum depth of 21 levels (using a single `u64` value as storage)
 pub type StaticMortonIndex3D64 = MortonIndex3D<StaticStorage3D<u64>>;
+/// A 3D Morton index with variable depth, but a statically-determined maximum depth of 42 levels (using a single `u128` value as storage)
 pub type StaticMortonIndex3D128 = MortonIndex3D<StaticStorage3D<u128>>;
-
+/// A 3D Morton index with variable depth. It uses a `Vec` as storage and can represent an unlimited number of cells
 pub type DynamicMortonIndex3D = MortonIndex3D<DynamicStorage3D>;
 
-/// A §D Morton index. This represents a single node inside an octree. The depth of the node and the maximum storage
+/// A 3D Morton index. This represents a single node inside an octree. The depth of the node and the maximum storage
 /// capacity of this type depend on the generic `Storage` type
 #[derive(Default, Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct MortonIndex3D<S: Storage<Dim3D>> {

@@ -81,6 +81,8 @@ pub enum Endianness {
     LittleEndian,
 }
 
+/// Trait that provides a numeric type with the necessary accessor methods to get and set a range of bits. This is used to drive
+/// the `Storage` of most Morton indices, as it allows getting and setting specific bit ranges within one or more bytes
 pub trait Bits {
     const BITS: usize;
 

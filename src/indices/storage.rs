@@ -6,16 +6,26 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 
+/// Helper trait that simplifies the implementation of the `Storage` trait. This encapsulates how a storage implementation
+/// maps its internal bit representation to the cells at a specific levels
 pub trait StorageType {
+    /// The corresponding `Dimension` for this `StorageType`
     type Dimension: dimensions::Dimension;
+    /// The maximum number of levels for this `StorageType`. Will be zero if there are unlimited levels. This is mostly identical to
+    /// what `max_depth` returns, however the latter returns an Option, which makes some calculations unnecessarily complicated, so
+    /// we have this constant here for these cases
     const MAX_LEVELS: usize;
+    /// The number of dimensions that this `StorageType` is intended for
     const DIMENSIONALITY: usize;
 
+    /// Returns the maximum depth of this storage type
     fn max_depth() -> Option<usize>;
+    /// Returns the cell at the given `level` from the given `bits`
     unsafe fn get_cell_at_level_unchecked<T: Bits>(
         bits: &T,
         level: usize,
     ) -> <Self::Dimension as dimensions::Dimension>::Cell;
+    /// Sets the cell at the given `level` within the given `bits` to `cell`
     unsafe fn set_cell_at_level_unchecked<T: Bits>(
         bits: &mut T,
         level: usize,
@@ -31,10 +41,14 @@ pub trait StorageType {
 pub trait Storage<D: Dimension>:
     Default + PartialOrd + Ord + PartialEq + Eq + Debug + Hash
 {
+    /// What is the associated `StorageType` of this `Storage`?
     type StorageType: StorageType<Dimension = D>;
+    /// What is the type used for the internal bit representation of this `Storage`?
     type Bits: Bits;
 
+    /// Returns the internal bit representation of this `Storage`
     fn bits(&self) -> &Self::Bits;
+    /// Returns a mutable borrow to the internal bit representation of this `Storage`
     fn bits_mut(&mut self) -> &mut Self::Bits;
     /// The current depth of the index stored within this storage type
     fn depth(&self) -> usize;
