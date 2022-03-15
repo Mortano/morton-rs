@@ -113,6 +113,21 @@ pub trait VariableDepthMortonIndex: MortonIndex + Sized {
     fn parent(&self) -> Option<Self> {
         self.ancestor(unsafe { NonZeroUsize::new_unchecked(1) })
     }
+    /// Returns a Morton index representing the node with the given `new_depth`. `new_depth` must be less than or equal to
+    /// `self.depth()`, otherwise `None` is returned.
+    fn with_depth(&self, new_depth: usize) -> Option<Self>
+    where
+        Self: Clone,
+    {
+        if new_depth > self.depth() {
+            return None;
+        }
+        let generations = self.depth() - new_depth;
+        if generations == 0 {
+            return Some(self.clone());
+        }
+        self.ancestor(unsafe { NonZeroUsize::new_unchecked(generations) })
+    }
     /// Returns a Morton index for the descendant node with the given `cells` below this node.
     /// As an example, `descendant(&[Quadrant::One])` is the child node at quadrant 1 of this node, `descendant(&[Quadrant::One, Quadrant::Two])`
     /// is the child node at quadrant 2 below the child node at quadrant 1 below this node, and so on.
