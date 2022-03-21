@@ -259,7 +259,7 @@ impl Bits for usize {
         target_pointer_width = "64"
     )))]
     unsafe fn from_u8_slice(bytes: &[u8], endianness: Endianness) -> Self {
-        std::compile_error!("Invalid pointer width on the current platform! morton-rs only supports 16-bit, 32-bit, and 64-bit platforms")
+        std::compile_error!("Invalid pointer width on the current platform! morton-index only supports 16-bit, 32-bit, and 64-bit platforms")
     }
 }
 

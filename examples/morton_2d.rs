@@ -1,14 +1,15 @@
-use morton_rs::{
+use morton_index::{
     dimensions::{Quadrant, QuadrantOrdering},
     FixedDepthMortonIndex2D8, MortonIndex, MortonIndexNaming,
 };
 use nalgebra::Vector2;
 
-fn main() -> morton_rs::Result<()> {
+fn main() -> morton_index::Result<()> {
     // You have a choice of three different storage types
     // The simplest one is the `FixedDepth` storage type. Morton indices with this storage always have the
     // same depth. As an example, here is a 2D Morton index which uses 8 bits internal storage, so always
     // represents a depth of 4 (2 bits per level, because we are in 2D)
+    // For more information on the different storage types, check out the `storage_types.rs` example!
     let mut fixed_index = FixedDepthMortonIndex2D8::try_from([
         Quadrant::Zero,
         Quadrant::One,
@@ -16,6 +17,7 @@ fn main() -> morton_rs::Result<()> {
         Quadrant::Three,
     ])?;
     assert_eq!(4, fixed_index.depth());
+    println!("{:?}", fixed_index.to_grid_index(QuadrantOrdering::XY));
 
     // You can access the cells by their level (where level 0 is the quadrant below the root node of a quadtree)
     assert_eq!(Quadrant::One, fixed_index.get_cell_at_level(1));

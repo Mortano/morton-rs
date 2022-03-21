@@ -83,7 +83,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "morton-rs"
+name = "morton-index"
 version = "0.1.0"
 dependencies = [
  "bytemuck",

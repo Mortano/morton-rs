@@ -1,4 +1,5 @@
-- to_grid_index ok that it returns VectorX<usize>, or should it return Result<VectorX<usize>> because values might not fit in usize?
+- The `to_grid_index` function returns a `VectorX<usize>`. On very deep Morton indices, a single `usize` value might be too small to fit the correct grid index. What happens in these situations? Should `to_grid_index` maybe return a `Result` instead?
+    - Technically, all statically determined Morton indices (`FixedDepth...` and `Static...`) would know what the maximum value in their grid indices is. Due to a lack of GATs in Rust, we can't express this in the signature of `to_grid_index`... 
 - Optimization in `DynamicStorage2D`: Implement `cmp` by doing a bitwise comparison instead of cell-by-cell. This requires that we implement `Bits` for `[u8]`, which might be a bit tricky
 - Further generalization between 2D and 3D Morton indices. The implementations are often very similar, with slight changes due to different dimensionality. There are some 'heavy lifters', e.g. the `from_grid_index` functions, but a lot is identical as well. Find out how this could be simplified further
     - Not sure if unifying more actually makes the code simpler though...

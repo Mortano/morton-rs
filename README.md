@@ -1,4 +1,4 @@
-# `morton-rs` - A Rust library for working with Morton indices
+# `morton-index` - A Rust library for working with Morton indices
 
 This library enables working with *Morton indices* in your Rust code. Morton indices provide a one-dimensional mapping for the nodes of an n-ary tree (quadtree in 2D, octree in 3D, and so on). Here are the key features of this library in a nutshell:
 - Morton indices for 2D and 3D (higher dimensions will be added in the future), providing the typical ordering of Morton indices. Sort a bunch of 2D Morton indices and you have a quadtree, do the same thing in 3D and you have an octree!
@@ -24,6 +24,12 @@ assert_eq!(Quadrant::One, fixed_index.get_cell_at_level(1));
 
 // Or get an iterator over all cells, starting at the root of the quadtree
 assert_eq!(Some(Quadrant::Three), fixed_index.cells().last());
+
+// You can also create a Morton index from an index in a regular grid
+assert_eq!(
+    fixed_index,
+    FixedDepthMortonIndex2D8::from_grid_index(Vector2::new(5, 3), QuadrantOrdering::XY),
+);
 ```
 
 For more examples, check out the [examples folder](./examples/).

@@ -1,10 +1,10 @@
-use morton_rs::{
+use morton_index::{
     dimensions::Quadrant, DynamicMortonIndex2D, DynamicStorage2D, FixedDepthMortonIndex2D8,
     FixedDepthStorage2D, MortonIndex, StaticMortonIndex2D8, Storage, VariableDepthMortonIndex,
 };
 
-fn main() -> morton_rs::Result<()> {
-    // morton_rs supports three different storage types for each Morton index:
+fn main() -> morton_index::Result<()> {
+    // morton_index supports three different storage types for each Morton index:
     // `FixedDepthStorage`, `StaticStorage`, and `DynamicStorage`
     //
     // `FixedDepthStorage` always encodes Morton indices with a fixed depth, so all Morton indices with a FixedDepthStorage
@@ -61,7 +61,7 @@ fn main() -> morton_rs::Result<()> {
     let static2 = StaticMortonIndex2D8::try_from([Quadrant::Three])?;
     assert_eq!(1, static2.depth());
 
-    // `StaticStorage` is one of the two `VariableStorage` types in morton-rs. As such, it allows getting parent/child nodes from
+    // `StaticStorage` is one of the two `VariableStorage` types in morton-index. As such, it allows getting parent/child nodes from
     // a Morton index with such a `VariableStorage` type:
     let parent_of_static2 = static2.parent().unwrap();
     let root_node = StaticMortonIndex2D8::default();
