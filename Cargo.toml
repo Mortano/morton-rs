@@ -2,8 +2,11 @@
 name = "morton-index"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Types and functions for efficiently and easily work with Morton indices"
+license-file = "LICENSE"
+authors = ["Pascal Bormann <pascal.bormann@igd.fraunhofer.de>"]
+keywords = ["morton-index", "morton", "space-filling-curve"]
+readme = "README.md"
 
 [dependencies]
 nalgebra = {version = "^0.23.1"}
