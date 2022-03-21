@@ -1083,6 +1083,19 @@ mod tests {
                         $typename::from_grid_index(grid_index_yx, QuadrantOrdering::YX);
                     assert_eq!(idx, roundtrip_idx_yx);
                 }
+
+                #[test]
+                fn inverted() {
+                    let quadrants = get_test_quadrants(MAX_LEVELS);
+                    let mut inv_quadrants = quadrants.clone();
+                    inv_quadrants.reverse();
+                    let idx = $typename::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let expected_inv_idx = $typename::try_from(inv_quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+                    assert_eq!(idx.inverted(), expected_inv_idx);
+                }
             }
         };
     }
@@ -1366,6 +1379,25 @@ mod tests {
                             .expect("Can't get Morton index from grid index");
                     assert_eq!(idx, roundtrip_idx_yx);
                 }
+
+                #[test]
+                fn inverted() {
+                    // Do it a bunch of times with different depths
+                    let iterations = 16;
+                    let mut rng = thread_rng();
+                    for _ in 0..iterations {
+                        let depth = rng.gen_range(0..=MAX_LEVELS);
+                        let quadrants = get_test_quadrants(depth);
+                        let mut inv_quadrants = quadrants.clone();
+                        inv_quadrants.reverse();
+                        let idx = $typename::try_from(quadrants.as_slice())
+                            .expect("Could not create Morton index from quadrants");
+
+                        let expected_inv_idx = $typename::try_from(inv_quadrants.as_slice())
+                            .expect("Could not create Morton index from quadrants");
+                        assert_eq!(idx.inverted(), expected_inv_idx);
+                    }
+                }
             }
         };
     }
@@ -1618,6 +1650,25 @@ mod tests {
                     let roundtrip_idx_yx =
                         $typename::from_grid_index(grid_index_yx, 29, QuadrantOrdering::YX);
                     assert_eq!(idx, roundtrip_idx_yx);
+                }
+
+                #[test]
+                fn inverted() {
+                    // Do it a bunch of times with different depths
+                    let iterations = 16;
+                    let mut rng = thread_rng();
+                    for _ in 0..iterations {
+                        let depth = rng.gen_range(0..=32);
+                        let quadrants = get_test_quadrants(depth);
+                        let mut inv_quadrants = quadrants.clone();
+                        inv_quadrants.reverse();
+                        let idx = $typename::try_from(quadrants.as_slice())
+                            .expect("Could not create Morton index from quadrants");
+
+                        let expected_inv_idx = $typename::try_from(inv_quadrants.as_slice())
+                            .expect("Could not create Morton index from quadrants");
+                        assert_eq!(idx.inverted(), expected_inv_idx);
+                    }
                 }
             }
         };

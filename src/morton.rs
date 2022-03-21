@@ -99,6 +99,25 @@ pub trait MortonIndex: PartialOrd + Ord + PartialEq + Eq + Debug + Hash {
         &self,
         ordering: <Self::Dimension as crate::dimensions::Dimension>::CellOrdering,
     ) -> <Self::Dimension as crate::dimensions::Dimension>::GridIndex;
+    /// Returns an inverted Morton index. This reverses the order of the cells, causing the lowest cell to become the highest
+    /// cell and vice versa
+    fn inverted(&self) -> Self
+    where
+        Self: Sized + Clone,
+    {
+        let mut ret = self.clone();
+        let max_level = self.depth();
+        for level in 0..max_level {
+            let inverted_level = max_level - level - 1;
+            unsafe {
+                ret.set_cell_at_level_unchecked(
+                    inverted_level,
+                    self.get_cell_at_level_unchecked(level),
+                );
+            }
+        }
+        ret
+    }
 }
 
 /// Trait for Morton index types that support variable depth. Provides methods to quickly obtain Morton indices for parent

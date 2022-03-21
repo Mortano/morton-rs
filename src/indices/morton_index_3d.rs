@@ -493,7 +493,7 @@ impl<B: FixedStorageType> VariableDepthStorage<Dim3D> for StaticStorage3D<B> {
         }
 
         let mut ret = *self;
-        // Zero out all quadrants below the new depth
+        // Zero out all octants below the new depth
         let new_depth = self.depth - generations.get() as u8;
         for level in new_depth..self.depth {
             unsafe {
@@ -1089,6 +1089,19 @@ mod tests {
                         assert_eq!(idx, rountrip_idx);
                     }
                 }
+
+                #[test]
+                fn inverted() {
+                    let octants = get_test_octants(MAX_LEVELS);
+                    let mut inv_octants = octants.clone();
+                    inv_octants.reverse();
+                    let idx = $typename::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let expected_inv_idx = $typename::try_from(inv_octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+                    assert_eq!(idx.inverted(), expected_inv_idx);
+                }
             }
         };
     }
@@ -1379,6 +1392,25 @@ mod tests {
                         assert_eq!(idx, rountrip_idx);
                     }
                 }
+
+                #[test]
+                fn inverted() {
+                    // Do it a bunch of times with different depths
+                    let iterations = 16;
+                    let mut rng = thread_rng();
+                    for _ in 0..iterations {
+                        let depth = rng.gen_range(0..=MAX_LEVELS);
+                        let octants = get_test_octants(depth);
+                        let mut inv_octants = octants.clone();
+                        inv_octants.reverse();
+                        let idx = $typename::try_from(octants.as_slice())
+                            .expect("Could not create Morton index from octants");
+
+                        let expected_inv_idx = $typename::try_from(inv_octants.as_slice())
+                            .expect("Could not create Morton index from octants");
+                        assert_eq!(idx.inverted(), expected_inv_idx);
+                    }
+                }
             }
         };
     }
@@ -1628,6 +1660,25 @@ mod tests {
                         let grid_index = idx.to_grid_index(ordering);
                         let roundtrip_idx = $typename::from_grid_index(grid_index, 29, ordering);
                         assert_eq!(idx, roundtrip_idx);
+                    }
+                }
+
+                #[test]
+                fn inverted() {
+                    // Do it a bunch of times with different depths
+                    let iterations = 16;
+                    let mut rng = thread_rng();
+                    for _ in 0..iterations {
+                        let depth = rng.gen_range(0..=32);
+                        let octants = get_test_octants(depth);
+                        let mut inv_octants = octants.clone();
+                        inv_octants.reverse();
+                        let idx = $typename::try_from(octants.as_slice())
+                            .expect("Could not create Morton index from octants");
+
+                        let expected_inv_idx = $typename::try_from(inv_octants.as_slice())
+                            .expect("Could not create Morton index from octants");
+                        assert_eq!(idx.inverted(), expected_inv_idx);
                     }
                 }
             }
