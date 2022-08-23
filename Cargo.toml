@@ -1,6 +1,6 @@
 [package]
 name = "morton-index"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Types and functions for efficiently and easily work with Morton indices"
 license-file = "LICENSE"
@@ -9,7 +9,7 @@ keywords = ["morton-index", "morton", "space-filling-curve"]
 readme = "README.md"
 
 [dependencies]
-nalgebra = {version = "^0.23.1"}
+nalgebra = {version = "0.31"}
 thiserror = "1.0.30"
 num-traits = "0.2.14"
 bytemuck = "1.7.3"

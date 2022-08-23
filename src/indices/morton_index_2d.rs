@@ -838,17 +838,20 @@ impl<B: FixedStorageType> From<MortonIndex2D<StaticStorage2D<B>>>
     for MortonIndex2D<DynamicStorage2D>
 {
     fn from(fixed_index: MortonIndex2D<StaticStorage2D<B>>) -> Self {
-        let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
-        #[cfg(target_endian = "little")]
-        let bits = native_bits.to_owned();
-        #[cfg(target_endian = "big")]
-        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
-        Self {
-            storage: DynamicStorage2D {
-                bits,
-                depth: StaticStorage::<Dim2D, B>::MAX_LEVELS,
-            },
-        }
+        let ret : Self = Default::default();
+        ret.descendant(&fixed_index.cells().collect::<Vec<_>>()).unwrap()
+        // TODO Implement more efficient (and CORRECT) conversion routine
+        // let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
+        // #[cfg(target_endian = "little")]
+        // let bits = native_bits.to_owned();
+        // #[cfg(target_endian = "big")]
+        // let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
+        // Self {
+        //     storage: DynamicStorage2D {
+        //         bits,
+        //         depth: StaticStorage::<Dim2D, B>::MAX_LEVELS,
+        //     },
+        // }
     }
 }
 
@@ -1745,6 +1748,20 @@ mod tests {
                 #[test]
                 fn convert_static_to_dynamic() {
                     let quadrants = get_test_quadrants($max_levels);
+                    let static_index = StaticType::try_from(quadrants.as_slice())
+                        .expect("Could not create Morton index from quadrants");
+
+                    let dynamic_index: DynamicType = static_index.into();
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = static_index.cells().collect::<Vec<_>>();
+                    let actual_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_dynamic_with_fewer_levels() {
+                    let quadrants = get_test_quadrants($max_levels / 2);
                     let static_index = StaticType::try_from(quadrants.as_slice())
                         .expect("Could not create Morton index from quadrants");
 

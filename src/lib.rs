@@ -1,3 +1,5 @@
+pub use nalgebra;
+
 mod morton;
 pub use self::morton::*;
 
@@ -10,3 +12,4 @@ pub use self::error::*;
 pub mod align;
 pub mod dimensions;
 pub mod number;
+pub mod helper;

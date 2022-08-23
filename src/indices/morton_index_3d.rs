@@ -226,6 +226,11 @@ impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
             storage: FixedDepthStorage3D { bits },
         }
     }
+
+    /// Creates a new MortonIndex3D from the raw bits of an index
+    pub fn from_raw_index(index: B) -> Self {
+        Self { storage: FixedDepthStorage3D { bits: index, } }
+    }
 }
 
 impl<B: FixedStorageType> MortonIndex3D<StaticStorage3D<B>> {
@@ -339,6 +344,11 @@ impl<B: FixedStorageType> MortonIndex3D<StaticStorage3D<B>> {
                 depth: grid_depth as u8,
             },
         })
+    }
+
+    /// Creates a new MortonIndex3D from the raw bits of an index with `depth`
+    pub fn from_raw_index(index: B, depth: u8) -> Self {
+        Self { storage: StaticStorage3D { bits: index, depth, } }
     }
 }
 
@@ -850,17 +860,24 @@ impl<B: FixedStorageType> From<MortonIndex3D<StaticStorage3D<B>>>
     for MortonIndex3D<DynamicStorage3D>
 {
     fn from(fixed_index: MortonIndex3D<StaticStorage3D<B>>) -> Self {
-        let native_bits = unsafe { fixed_index.storage.bits.as_u8_slice() };
-        #[cfg(target_endian = "little")]
-        let bits = native_bits.to_owned();
-        #[cfg(target_endian = "big")]
-        let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
-        Self {
-            storage: DynamicStorage3D {
-                bits,
-                depth: StaticStorage::<Dim3D, B>::MAX_LEVELS,
-            },
-        }
+        let ret : Self = Default::default();
+        ret.descendant(&fixed_index.cells().collect::<Vec<_>>()).unwrap()
+        
+        // TODO Implement a more efficient conversion method
+        // let start_bit = B::BITS - ((fixed_index.depth() + 1) * 3);
+        // let end_bit = B::BITS;
+        // let relevant_bits = unsafe { fixed_index.storage.bits.get_bits(start_bit..end_bit) };
+        // let native_bits = unsafe { relevant_bits.as_u8_slice() };
+        // #[cfg(target_endian = "little")]
+        // let bits = native_bits.to_owned();
+        // #[cfg(target_endian = "big")]
+        // let bits = native_bits.iter().copied().rev().collect::<Vec<_>>();
+        // Self {
+        //     storage: DynamicStorage3D {
+        //         bits,
+        //         depth: fixed_index.depth(),
+        //     },
+        // }
     }
 }
 
@@ -1756,6 +1773,20 @@ mod tests {
                 #[test]
                 fn convert_static_to_dynamic() {
                     let octants = get_test_octants($max_levels);
+                    let static_index = StaticType::try_from(octants.as_slice())
+                        .expect("Could not create Morton index from octants");
+
+                    let dynamic_index: DynamicType = static_index.into();
+
+                    assert_eq!(static_index.depth(), dynamic_index.depth());
+                    let expected_cells = static_index.cells().collect::<Vec<_>>();
+                    let actual_cells = dynamic_index.cells().collect::<Vec<_>>();
+                    assert_eq!(expected_cells, actual_cells);
+                }
+
+                #[test]
+                fn convert_static_to_dynamic_with_fewer_levels() {
+                    let octants = get_test_octants($max_levels / 2);
                     let static_index = StaticType::try_from(octants.as_slice())
                         .expect("Could not create Morton index from octants");
 

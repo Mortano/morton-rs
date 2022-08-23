@@ -3,6 +3,7 @@ use std::hash::Hash;
 use std::num::NonZeroUsize;
 
 /// When converting a Morton index to a string, these are the different ways to construct the string
+#[derive(Debug, Copy, Clone)]
 pub enum MortonIndexNaming {
     /// Construct a string by concatenating the cells of the N-ary tree at each level. Each cell can be represented by
     /// a number in `[0;(2^N)-1]`, resulting in a string such as '2630'. This represents a 4-level Morton index with cell
