@@ -502,6 +502,18 @@ pub fn add_two_zeroes_before_every_bit_u8(val: u8) -> u32 {
     val
 }
 
+/// Adds two zero bits before every bit in `val`, considering only the lowest 21 bits in val (higher bits are masked off)
+pub fn add_two_zeroes_before_every_bit_u32(val: u32) -> u64 {
+    let mut val = val as u64;
+    val &= 0b111111111111111111111; // 21 bits
+    val = (val | (val << 32)) & 0x00FF0000_0000FFFF;
+    val = (val | (val << 16)) & 0x00FF0000_FF0000FF;
+    val = (val | (val << 8)) & 0xF00F00F0_0F00F00F;
+    val = (val | (val << 4)) & 0x30C30C30_C30C30C3;
+    val = (val | (val << 2)) & 0b00010010_01001001_00100100_10010010_01001001_00100100_10010010_01001001;
+    val
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,6 +631,32 @@ mod tests {
             0b100100_10010010_01001001_u32,
             add_two_zeroes_before_every_bit_u8(0b11111111)
         );
+    }
+
+    #[test]
+    fn test_add_two_zeroes_before_every_bit_u32() {
+        assert_eq!(0b1, add_two_zeroes_before_every_bit_u32(0b1));
+        assert_eq!(0b1001, add_two_zeroes_before_every_bit_u32(0b11));
+        assert_eq!(0b1000, add_two_zeroes_before_every_bit_u32(0b10));
+        assert_eq!(0b1001001, add_two_zeroes_before_every_bit_u32(0b111));
+        assert_eq!(0b10_01001001, add_two_zeroes_before_every_bit_u32(0b1111));
+        assert_eq!(0b10010_01001001, add_two_zeroes_before_every_bit_u32(0b11111));
+        assert_eq!(0b10010010_01001001, add_two_zeroes_before_every_bit_u32(0b111111));
+        assert_eq!(0b100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b1111111));
+        assert_eq!(0b100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b11111111));
+        assert_eq!(0b1_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b111111111));
+        assert_eq!(0b1001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b1111111111));
+        assert_eq!(0b1001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b11111111111));
+        assert_eq!(0b10_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b111111111111));
+        assert_eq!(0b10010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b1111111111111));
+        assert_eq!(0b10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b11111111111111));
+        assert_eq!(0b100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b111111111111111));
+        assert_eq!(0b100100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b1111111111111111));
+        assert_eq!(0b1_00100100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b11111111111111111));
+        assert_eq!(0b1001_00100100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b111111111111111111));
+        assert_eq!(0b1001001_00100100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b1111111111111111111));
+        assert_eq!(0b10_01001001_00100100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b11111111111111111111));
+        assert_eq!(0b10010_01001001_00100100_10010010_01001001_00100100_10010010_01001001, add_two_zeroes_before_every_bit_u32(0b111111111111111111111));
     }
 
     #[test]

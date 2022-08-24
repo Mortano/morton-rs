@@ -8,7 +8,7 @@ use nalgebra::Vector3;
 
 use crate::{
     dimensions::{Dim3D, Dimension, Octant, OctantOrdering},
-    number::{add_two_zeroes_before_every_bit_u8, Bits, Endianness},
+    number::{add_two_zeroes_before_every_bit_u8, Bits, Endianness, add_two_zeroes_before_every_bit_u32},
     CellIter, DynamicStorage, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming,
     StaticStorage, Storage, StorageType, VariableDepthMortonIndex, VariableDepthStorage,
 };
@@ -170,6 +170,8 @@ impl<S: Storage<Dim3D>> MortonIndex for MortonIndex3D<S> {
 impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
     /// Maximum levels that this Morton index type can represent
     pub const MAX_LEVELS: usize = B::BITS / Dim3D::DIMENSIONALITY;
+    /// Bitmask that only retains the lowest MAX_LEVELS bits
+    pub const MAX_LEVELS_BITMASK: usize = (1 << Self::MAX_LEVELS) - 1;
     /// Creates a new MortonIndex3D with fixed-depth storage from the given 3D grid index. The `grid_index` is assumed to
     /// represent a grid with a depth equal to `FixedDepthStorage3D<B>::MAX_LEVELS`.
     ///
@@ -190,9 +192,9 @@ impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
         }
         // Similar construction as compared to static storage, but we have a fixed depth
 
-        let x_bits = unsafe { grid_index.x.get_bits(0..fixed_depth) };
-        let y_bits = unsafe { grid_index.y.get_bits(0..fixed_depth) };
-        let z_bits = unsafe { grid_index.z.get_bits(0..fixed_depth) };
+        let x_bits = grid_index.x & Self::MAX_LEVELS_BITMASK;
+        let y_bits = grid_index.y & Self::MAX_LEVELS_BITMASK;
+        let z_bits = grid_index.z & Self::MAX_LEVELS_BITMASK;
 
         let (x_shift, y_shift, z_shift) = ordering.get_bit_shifts_for_xyz();
 
@@ -201,24 +203,25 @@ impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
         // We have to take this into consideration when we set the bits!
         let leftover_bits_at_end: usize = B::BITS % Dim3D::DIMENSIONALITY;
         // As opposed to the 2D case, in the 3D case we can't simply process 8-bit chunks at a time, because
-        // a single cell takes 3 bits and thus doesn't evenly divide 8. So instead we read one byte at a time
-        // from the index and set 10 bits at a time
-        let num_chunks = (fixed_depth + 7) / 8;
+        // a single cell takes 3 bits and thus doesn't evenly divide 8. We instead read 21 bits of the grid 
+        // index at a time. This is a good compromise, because it means for a 64-bit Morton index, we only 
+        // ever do one pass of the following loop!
+        let num_chunks = (fixed_depth + 20) / 21;
         for chunk_index in 0..num_chunks {
-            let start_bit = chunk_index * 8;
-            let end_bit = start_bit + 8;
-            let x_chunk = unsafe { x_bits.get_bits(start_bit..end_bit) as u8 };
-            let y_chunk = unsafe { y_bits.get_bits(start_bit..end_bit) as u8 };
-            let z_chunk = unsafe { z_bits.get_bits(start_bit..end_bit) as u8 };
-            let chunk = (add_two_zeroes_before_every_bit_u8(x_chunk) << x_shift)
-                | (add_two_zeroes_before_every_bit_u8(y_chunk) << y_shift)
-                | (add_two_zeroes_before_every_bit_u8(z_chunk) << z_shift);
+            let start_bit = chunk_index * 21;
+            let end_bit = start_bit + 21;
+            let x_chunk = unsafe { x_bits.get_bits(start_bit..end_bit) as u32 };
+            let y_chunk = unsafe { y_bits.get_bits(start_bit..end_bit) as u32 };
+            let z_chunk = unsafe { z_bits.get_bits(start_bit..end_bit) as u32 };
+            let chunk = (add_two_zeroes_before_every_bit_u32(x_chunk) << x_shift)
+                | (add_two_zeroes_before_every_bit_u32(y_chunk) << y_shift)
+                | (add_two_zeroes_before_every_bit_u32(z_chunk) << z_shift);
 
-            // chunk contains 24 valid bits at most
-            let start_bit = (chunk_index * 24) + leftover_bits_at_end;
-            let end_bit = (start_bit + 24).min(B::BITS);
+            // chunk contains 63 valid bits at most
+            let start_bit = (chunk_index * 63) + leftover_bits_at_end;
+            let end_bit = (start_bit + 63).min(B::BITS);
             unsafe {
-                bits.set_bits(start_bit..end_bit, B::from_u32(chunk));
+                bits.set_bits(start_bit..end_bit, B::from_u64(chunk));
             }
         }
 
