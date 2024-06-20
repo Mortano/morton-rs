@@ -8,7 +8,9 @@ use nalgebra::Vector3;
 
 use crate::{
     dimensions::{Dim3D, Dimension, Octant, OctantOrdering},
-    number::{add_two_zeroes_before_every_bit_u8, Bits, Endianness, add_two_zeroes_before_every_bit_u32},
+    number::{
+        add_two_zeroes_before_every_bit_u32, add_two_zeroes_before_every_bit_u8, Bits, Endianness,
+    },
     CellIter, DynamicStorage, FixedDepthStorage, FixedStorageType, MortonIndex, MortonIndexNaming,
     StaticStorage, Storage, StorageType, VariableDepthMortonIndex, VariableDepthStorage,
 };
@@ -203,8 +205,8 @@ impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
         // We have to take this into consideration when we set the bits!
         let leftover_bits_at_end: usize = B::BITS % Dim3D::DIMENSIONALITY;
         // As opposed to the 2D case, in the 3D case we can't simply process 8-bit chunks at a time, because
-        // a single cell takes 3 bits and thus doesn't evenly divide 8. We instead read 21 bits of the grid 
-        // index at a time. This is a good compromise, because it means for a 64-bit Morton index, we only 
+        // a single cell takes 3 bits and thus doesn't evenly divide 8. We instead read 21 bits of the grid
+        // index at a time. This is a good compromise, because it means for a 64-bit Morton index, we only
         // ever do one pass of the following loop!
         let num_chunks = (fixed_depth + 20) / 21;
         for chunk_index in 0..num_chunks {
@@ -232,7 +234,38 @@ impl<B: FixedStorageType> MortonIndex3D<FixedDepthStorage3D<B>> {
 
     /// Creates a new MortonIndex3D from the raw bits of an index
     pub fn from_raw_index(index: B) -> Self {
-        Self { storage: FixedDepthStorage3D { bits: index, } }
+        Self {
+            storage: FixedDepthStorage3D { bits: index },
+        }
+    }
+}
+
+impl MortonIndex3D<FixedDepthStorage3D<u64>> {
+    pub fn from_grid_index_fast(
+        grid_index: <Dim3D as Dimension>::GridIndex,
+        ordering: OctantOrdering,
+    ) -> Self {
+        let fixed_depth = <FixedDepthStorage<Dim3D, u64> as StorageType>::MAX_LEVELS;
+        if fixed_depth > (std::mem::size_of::<usize>() * 8) {
+            panic!(
+                "Size of usize is too small for a fixed depth of {}",
+                fixed_depth
+            );
+        }
+
+        let x_bits = grid_index.x & Self::MAX_LEVELS_BITMASK;
+        let y_bits = grid_index.y & Self::MAX_LEVELS_BITMASK;
+        let z_bits = grid_index.z & Self::MAX_LEVELS_BITMASK;
+
+        let (x_shift, y_shift, z_shift) = ordering.get_bit_shifts_for_xyz();
+
+        let chunk = (add_two_zeroes_before_every_bit_u32(x_bits as u32) << x_shift)
+            | (add_two_zeroes_before_every_bit_u32(y_bits as u32) << y_shift)
+            | (add_two_zeroes_before_every_bit_u32(z_bits as u32) << z_shift);
+
+        Self {
+            storage: FixedDepthStorage3D { bits: chunk << 1 },
+        }
     }
 }
 
@@ -351,7 +384,9 @@ impl<B: FixedStorageType> MortonIndex3D<StaticStorage3D<B>> {
 
     /// Creates a new MortonIndex3D from the raw bits of an index with `depth`
     pub fn from_raw_index(index: B, depth: u8) -> Self {
-        Self { storage: StaticStorage3D { bits: index, depth, } }
+        Self {
+            storage: StaticStorage3D { bits: index, depth },
+        }
     }
 }
 
@@ -863,9 +898,10 @@ impl<B: FixedStorageType> From<MortonIndex3D<StaticStorage3D<B>>>
     for MortonIndex3D<DynamicStorage3D>
 {
     fn from(fixed_index: MortonIndex3D<StaticStorage3D<B>>) -> Self {
-        let ret : Self = Default::default();
-        ret.descendant(&fixed_index.cells().collect::<Vec<_>>()).unwrap()
-        
+        let ret: Self = Default::default();
+        ret.descendant(&fixed_index.cells().collect::<Vec<_>>())
+            .unwrap()
+
         // TODO Implement a more efficient conversion method
         // let start_bit = B::BITS - ((fixed_index.depth() + 1) * 3);
         // let end_bit = B::BITS;

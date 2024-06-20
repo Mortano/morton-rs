@@ -16,3 +16,8 @@ bytemuck = "1.7.3"
 
 [dev-dependencies]
 rand = "0.8.5"
+criterion = "0.3"
+
+[[bench]]
+name = "morton_index_3d_bench"
+harness = false
